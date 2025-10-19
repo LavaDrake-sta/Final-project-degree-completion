@@ -1,0 +1,71 @@
+# PII Detection System - Requirements
+# פרויקט גמר - זיהוי מידע אישי רגיש
+
+# ===============================
+# חבילות בסיסיות
+# ===============================
+numpy>=1.21.0
+pandas>=1.3.0
+matplotlib>=3.4.0
+seaborn>=0.11.0
+
+# ===============================
+# עיבוד טקסט
+# ===============================
+nltk>=3.6.0
+spacy>=3.4.0
+
+# ===============================
+# עיבוד תמונות ו-OCR
+# ===============================
+opencv-python>=4.5.0
+Pillow>=8.3.0
+pytesseract>=0.3.8
+
+# ===============================
+# עיבוד מסמכים
+# ===============================
+python-docx>=0.8.11
+python-pptx>=0.6.21
+PyPDF2>=3.0.0
+pymupdf>=1.20.0
+
+# ===============================
+# ממשק משתמש
+# ===============================
+streamlit>=1.12.0
+gradio>=3.1.0
+
+# ===============================
+# עבור שלב ה-AI (בהמשך)
+# ===============================
+torch>=1.12.0
+transformers>=4.21.0
+datasets>=2.4.0
+scikit-learn>=1.1.0
+
+# ===============================
+# כלי פיתוח
+# ===============================
+pytest>=7.0.0
+black>=22.0.0
+flake8>=5.0.0
+
+# ===============================
+# הוראות התקנה חשובות:
+# ===============================
+# 
+# 1. התקנת Tesseract OCR:
+#    Windows: הורד מ- https://github.com/UB-Mannheim/tesseract/wiki
+#    Ubuntu: sudo apt install tesseract-ocr tesseract-ocr-heb
+#    MacOS: brew install tesseract tesseract-lang
+#
+# 2. התקנת חבילות Python:
+#    pip install -r requirements.txt
+#
+# 3. בדיקת התקנה:
+#    python -c "import cv2, pytesseract; print('OCR מוכן!')"
+#
+# 4. הפעלת המערכת:
+#    streamlit run src/ui/streamlit_app.py
+#
