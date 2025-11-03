@@ -8,8 +8,6 @@ import re
 import warnings
 from typing import List, Dict, Set, Tuple
 from dataclasses import dataclass
-import spacy
-from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
 
 warnings.filterwarnings('ignore')
 
@@ -48,6 +46,17 @@ class PIIDetector:
         """Load AI models for NER"""
         try:
             print("🔄 Loading AI models (this may take a moment on first run)...")
+
+            # Import AI libraries only when needed
+            try:
+                from transformers import pipeline
+                import spacy
+            except ImportError as e:
+                print(f"⚠️  AI libraries not installed: {e}")
+                print("   Install with: pip install transformers spacy torch")
+                print("   Falling back to regex-only detection")
+                self.use_ai = False
+                return
 
             # Load multilingual NER model
             model_name = "Davlan/bert-base-multilingual-cased-ner-hrl"

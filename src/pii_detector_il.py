@@ -13,8 +13,6 @@ import re
 import warnings
 from typing import List, Dict, Set, Tuple
 from dataclasses import dataclass
-import spacy
-from transformers import pipeline
 
 from .israeli_privacy_law import (
     ISRAELI_PRIVACY_CATEGORIES,
@@ -69,6 +67,17 @@ class IsraeliPIIDetector:
         """Load AI models for NER"""
         try:
             print("🔄 טוען מודלי AI... (עשוי לקחת זמן בהרצה ראשונה)")
+
+            # Import AI libraries only when needed
+            try:
+                from transformers import pipeline
+                import spacy
+            except ImportError as e:
+                print(f"⚠️  ספריות AI לא מותקנות: {e}")
+                print("   התקן עם: pip install transformers spacy torch")
+                print("   עובר לזיהוי מבוסס Regex בלבד")
+                self.use_ai = False
+                return
 
             # Load multilingual NER model
             model_name = "Davlan/bert-base-multilingual-cased-ner-hrl"

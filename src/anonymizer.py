@@ -5,7 +5,7 @@ Hides/redacts detected PII from text
 
 from typing import Dict, List
 from enum import Enum
-from .pii_detector import PIIEntity
+from .pii_detector_il import PIIEntity
 
 
 class AnonymizationMode(Enum):
