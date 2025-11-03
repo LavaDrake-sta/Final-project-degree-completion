@@ -1,6 +1,7 @@
 """
 Main Application
 PII Detection and Anonymization System
+Compliant with Israeli Privacy Protection Law - Amendment 13 (2024)
 """
 
 import sys
@@ -12,9 +13,10 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.loaders import FileLoader, load_all_files
-from src.pii_detector import PIIDetector
+from src.pii_detector_il import IsraeliPIIDetector
 from src.anonymizer import PIIAnonymizer, AnonymizationMode
 from src.report import ReportGenerator
+from src.israeli_privacy_law import get_category_hebrew_name, is_special_sensitivity
 
 
 def print_banner():
@@ -24,6 +26,9 @@ def print_banner():
     ║                                                               ║
     ║         🧠 מערכת זיהוי והסתרת פרטים אישיים (PII)              ║
     ║              AI-Powered PII Detection System                  ║
+    ║                                                               ║
+    ║   ⚖️  תואם לתיקון 13 לחוק הגנת הפרטיות, התשפ"ד-2024          ║
+    ║      Compliant with Privacy Protection Law Amendment 13       ║
     ║                                                               ║
     ╚═══════════════════════════════════════════════════════════════╝
     """
@@ -72,16 +77,16 @@ def main():
 
     # Step 2: Initialize AI detector
     print("=" * 70)
-    print("שלב 2: אתחול מודלי AI")
+    print("שלב 2: אתחול מודלי AI (תואם תיקון 13)")
     print("=" * 70)
 
     try:
-        detector = PIIDetector(use_ai=True)
+        detector = IsraeliPIIDetector(use_ai=True)
         print()
     except Exception as e:
         print(f"\n⚠️  שגיאה באתחול AI: {e}")
         print("   ממשיך עם זיהוי מבוסס Regex בלבד...\n")
-        detector = PIIDetector(use_ai=False)
+        detector = IsraeliPIIDetector(use_ai=False)
 
     # Step 3: Detect PII
     print("=" * 70)
@@ -114,10 +119,19 @@ def main():
                 'entities': entities
             }
 
-            # Print summary
+            # Print summary with sensitivity breakdown
             total_pii = sum(len(elist) for elist in entities.values())
+            special_count = sum(
+                len(elist) for etype, elist in entities.items()
+                if is_special_sensitivity(etype)
+            )
+
             if total_pii > 0:
-                print(f"  📄 {filename}: נמצאו {total_pii} פרטים אישיים")
+                print(f"  📄 {filename}: נמצאו {total_pii} פרטים אישיים", end="")
+                if special_count > 0:
+                    print(f" (כולל {special_count} בעלי רגישות מיוחדת)")
+                else:
+                    print()
             else:
                 print(f"  ✓ {filename}: לא נמצאו פרטים אישיים")
 
@@ -203,9 +217,17 @@ def main():
         if 'entities' in r
     )
 
+    # Count specially sensitive items
+    total_special_items = sum(
+        sum(len(elist) for etype, elist in r['entities'].items() if is_special_sensitivity(etype))
+        for r in results.values()
+        if 'entities' in r
+    )
+
     print(f"\n   📊 סה\"כ קבצים שעובדו: {total_files}")
     print(f"   🔍 קבצים עם פרטים אישיים: {files_with_pii}")
     print(f"   🔐 סה\"כ פרטים אישיים שזוהו: {total_pii_items}")
+    print(f"   ⚠️  מתוכם בעלי רגישות מיוחדת (תיקון 13): {total_special_items}")
 
     if files_with_pii > 0:
         print(f"\n   📁 קבצים מוסתרים נשמרו ב: {ANONYMIZED_DIR}")
@@ -215,6 +237,7 @@ def main():
 
     print("=" * 70)
     print("✨ העיבוד הושלם בהצלחה!")
+    print("⚖️  המערכת תואמת לתיקון 13 לחוק הגנת הפרטיות")
     print("=" * 70)
     print()
 

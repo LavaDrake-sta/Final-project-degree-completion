@@ -1,13 +1,19 @@
 """
-Report Generator Module
+Report Generator Module - Israeli Privacy Law Compliant
 Creates detailed reports of PII detection results
+Compliant with Privacy Protection Law Amendment 13 (2024)
 """
 
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List
-from .pii_detector import PIIEntity
+from .pii_detector_il import PIIEntity
+from .israeli_privacy_law import (
+    get_category_hebrew_name,
+    is_special_sensitivity,
+    ISRAELI_PRIVACY_CATEGORIES
+)
 
 
 class ReportGenerator:
@@ -58,6 +64,10 @@ class ReportGenerator:
             stats_df = self._create_statistics_dataframe(results)
             stats_df.to_excel(writer, sheet_name='סטטיסטיקה', index=False)
 
+            # Sheet 4: Amendment 13 Compliance
+            compliance_df = self._create_compliance_dataframe(results)
+            compliance_df.to_excel(writer, sheet_name='תיקון 13', index=False)
+
         print(f"✓ דוח נוצר בהצלחה: {output_path}")
         return str(output_path)
 
@@ -101,38 +111,28 @@ class ReportGenerator:
 
             if 'entities' in result:
                 entities = result['entities']
-                row.update({
-                    'שמות אנשים': len(entities.get('PERSON', [])),
-                    'תעודות זהות': len(entities.get('ID_NUMBER', [])),
-                    'טלפונים': len(entities.get('PHONE', [])),
-                    'אימיילים': len(entities.get('EMAIL', [])),
-                    'כתובות': len(entities.get('ADDRESS', [])),
-                    'כרטיסי אשראי': len(entities.get('CREDIT_CARD', [])),
-                    'חשבונות בנק': len(entities.get('BANK_ACCOUNT', [])),
-                    'ארגונים': len(entities.get('ORGANIZATION', [])),
-                    'מיקומים': len(entities.get('LOCATION', []))
-                })
 
-                total_pii = sum(
+                # Add all Israeli Privacy Law categories
+                for cat_key, cat_info in ISRAELI_PRIVACY_CATEGORIES.items():
+                    row[cat_info.hebrew_name] = len(entities.get(cat_key, []))
+
+                # Calculate totals
+                total_pii = sum(len(entities.get(key, [])) for key in entities.keys())
+                special_count = sum(
                     len(entities.get(key, []))
                     for key in entities.keys()
+                    if is_special_sensitivity(key)
                 )
+
                 row['סה"כ פרטים אישיים'] = total_pii
+                row['מידע בעל רגישות מיוחדת'] = special_count
 
             else:
                 # No entities (error or no text)
-                row.update({
-                    'שמות אנשים': 0,
-                    'תעודות זהות': 0,
-                    'טלפונים': 0,
-                    'אימיילים': 0,
-                    'כתובות': 0,
-                    'כרטיסי אשראי': 0,
-                    'חשבונות בנק': 0,
-                    'ארגונים': 0,
-                    'מיקומים': 0,
-                    'סה"כ פרטים אישיים': 0
-                })
+                for cat_key, cat_info in ISRAELI_PRIVACY_CATEGORIES.items():
+                    row[cat_info.hebrew_name] = 0
+                row['סה"כ פרטים אישיים'] = 0
+                row['מידע בעל רגישות מיוחדת'] = 0
 
             rows.append(row)
 
@@ -152,7 +152,9 @@ class ReportGenerator:
                 for entity in entity_list:
                     rows.append({
                         'שם הקובץ': filename,
-                        'סוג פרט': entity_type,
+                        'סוג פרט': get_category_hebrew_name(entity_type),
+                        'סוג (אנגלית)': entity_type,
+                        'רמת רגישות': 'מיוחדת' if is_special_sensitivity(entity_type) else 'רגילה',
                         'ערך': entity.text,
                         'מיקום (התחלה)': entity.start,
                         'מיקום (סוף)': entity.end,
@@ -235,6 +237,164 @@ class ReportGenerator:
             rows.append({
                 'מדד': hebrew_names.get(entity_type, entity_type),
                 'ערך': count
+            })
+
+        return pd.DataFrame(rows)
+
+    def _create_compliance_dataframe(self, results: Dict[str, Dict]) -> pd.DataFrame:
+        """
+        Create Amendment 13 compliance report DataFrame
+        Shows breakdown by sensitivity level
+        """
+        rows = []
+
+        # Header
+        rows.append({
+            'קטגוריה': 'תיקון 13 לחוק הגנת הפרטיות, התשפ"ד-2024',
+            'ערך': '',
+            'הערות': 'דוח תאימות'
+        })
+
+        rows.append({'קטגוריה': '', 'ערך': '', 'הערות': ''})
+
+        # Count standard vs specially sensitive
+        standard_total = 0
+        special_total = 0
+
+        standard_breakdown = {}
+        special_breakdown = {}
+
+        for filename, result in results.items():
+            if 'entities' not in result:
+                continue
+
+            entities = result['entities']
+
+            for entity_type, entity_list in entities.items():
+                count = len(entity_list)
+                if count == 0:
+                    continue
+
+                if is_special_sensitivity(entity_type):
+                    special_total += count
+                    if entity_type not in special_breakdown:
+                        special_breakdown[entity_type] = 0
+                    special_breakdown[entity_type] += count
+                else:
+                    standard_total += count
+                    if entity_type not in standard_breakdown:
+                        standard_breakdown[entity_type] = 0
+                    standard_breakdown[entity_type] += count
+
+        # Summary
+        rows.append({
+            'קטגוריה': 'סיכום כללי',
+            'ערך': '',
+            'הערות': ''
+        })
+
+        rows.append({
+            'קטגוריה': 'סה"כ פרטים אישיים',
+            'ערך': standard_total + special_total,
+            'הערות': 'כל הפרטים שזוהו'
+        })
+
+        rows.append({
+            'קטגוריה': 'פרטים אישיים רגילים',
+            'ערך': standard_total,
+            'הערות': 'הגנה סטנדרטית'
+        })
+
+        rows.append({
+            'קטגוריה': 'מידע בעל רגישות מיוחדת',
+            'ערך': special_total,
+            'הערות': 'סעיף 7(ג) - דורש הגנה מוגברת'
+        })
+
+        rows.append({'קטגוריה': '', 'ערך': '', 'הערות': ''})
+
+        # Standard personal information breakdown
+        rows.append({
+            'קטגוריה': 'פירוט - פרטים אישיים רגילים',
+            'ערך': '',
+            'הערות': ''
+        })
+
+        for entity_type, count in standard_breakdown.items():
+            rows.append({
+                'קטגוריה': f'  • {get_category_hebrew_name(entity_type)}',
+                'ערך': count,
+                'הערות': entity_type
+            })
+
+        if not standard_breakdown:
+            rows.append({
+                'קטגוריה': '  (לא נמצאו)',
+                'ערך': 0,
+                'הערות': ''
+            })
+
+        rows.append({'קטגוריה': '', 'ערך': '', 'הערות': ''})
+
+        # Specially sensitive information breakdown
+        rows.append({
+            'קטגוריה': 'פירוט - מידע בעל רגישות מיוחדת (תיקון 13)',
+            'ערך': '',
+            'הערות': ''
+        })
+
+        special_categories_found = {
+            'MEDICAL_INFO': 'מידע רפואי',
+            'GENETIC_INFO': 'מידע גנטי',
+            'BIOMETRIC_ID': 'מזהה ביומטרי',
+            'SEXUAL_ORIENTATION': 'נטייה מינית',
+            'POLITICAL_OPINION': 'דעה פוליטית',
+            'RELIGIOUS_BELIEF': 'אמונה דתית',
+            'CRIMINAL_RECORD': 'עבר פלילי',
+            'LOCATION_DATA': 'נתוני מיקום',
+            'ETHNIC_ORIGIN': 'מוצא אתני',
+            'PERSONALITY_ASSESSMENT': 'הערכת תכונות אישיות',
+            'SALARY_FINANCIAL': 'שכר ופעילות כלכלית',
+            'CREDIT_CARD': 'כרטיס אשראי',
+            'BANK_ACCOUNT': 'חשבון בנק',
+            'FAMILY_PRIVACY': 'פרטיות חיי משפחה',
+            'CONFIDENTIAL_INFO': 'מידע חסוי מכוח דין'
+        }
+
+        for cat_key, cat_name in special_categories_found.items():
+            count = special_breakdown.get(cat_key, 0)
+            rows.append({
+                'קטגוריה': f'  • {cat_name}',
+                'ערך': count,
+                'הערות': cat_key if count > 0 else ''
+            })
+
+        rows.append({'קטגוריה': '', 'ערך': '', 'הערות': ''})
+
+        # Compliance notes
+        rows.append({
+            'קטגוריה': 'הערות תאימות',
+            'ערך': '',
+            'הערות': ''
+        })
+
+        rows.append({
+            'קטגוריה': 'תאריך כניסה לתוקף של התיקון',
+            'ערך': '14.8.2025',
+            'הערות': 'חוק הגנת הפרטיות (תיקון מס\' 13), התשפ"ד-2024'
+        })
+
+        rows.append({
+            'קטגוריה': 'אחריות מנהל מאגר',
+            'ערך': 'חובה',
+            'הערות': 'אבטחת מידע והגנה מוגברת למידע רגיש'
+        })
+
+        if special_total > 0:
+            rows.append({
+                'קטגוריה': 'המלצה',
+                'ערך': 'דחוף',
+                'הערות': f'נמצאו {special_total} פריטים בעלי רגישות מיוחדת - נדרשת אבטחה מוגברת'
             })
 
         return pd.DataFrame(rows)
