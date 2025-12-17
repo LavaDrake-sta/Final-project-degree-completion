@@ -10,7 +10,7 @@ import os
 # הגדרת נתיב Tesseract (חשוב!)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-def test_simple_ocr():
+def test_simple_ocr(detectors=None):
     """בדיקה פשוטה של OCR"""
 
     print("🔍 בדיקת OCR על התמונה")
@@ -73,7 +73,7 @@ def test_simple_ocr():
 
             # ייבוא הזיהוי שלנו
             sys.path.append('src')
-            from detectors.basic_detector import BasicPIIDetector
+            from src.detectors.basic_detector import BasicPIIDetector
 
             detector = BasicPIIDetector()
             results = detector.analyze_text(best_text)
