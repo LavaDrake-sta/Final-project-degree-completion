@@ -98,6 +98,7 @@ class ImageProcessor:
             # OCR עם הגדרות שונות
             self.logger.info("🔍 מתחיל OCR...")
 
+
             best_text = ""
             best_confidence = 0
 
