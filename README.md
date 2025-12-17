@@ -112,8 +112,13 @@ cd Final-project-degree-completion
 python -m venv venv
 venv\Scripts\activate
 
+#להיכנס לתיקייה של PPI
+PII_Detection_System
+אחרי זה להתחיל את פעולות הריצה להפעיל מודלים ואחרי זה את האפליקציה
+
 # התקנת ספריות
 pip install -r requirements.txt
 
 # הפעלת הסורק
-python -m src.main
+python -m main
+
