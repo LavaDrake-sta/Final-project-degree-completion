@@ -1,491 +1,326 @@
 """
-ממשק משתמש מתקדם עם Streamlit
-תמיכה בטקסט, תמונות ו-PDF
-גרסה מתוקנת עם imports נכונים
+ממשק משתמש - זיהוי מידע אישי רגיש
+גרסה 3.1 — נושא כהה + כל האפשרויות בדף ראשי
 """
 
+import logging
 import streamlit as st
 import pandas as pd
 import sys
-import os
 from pathlib import Path
 import pytesseract
 
-# הגדרת Tesseract
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# הוספת נתיב src - תיקון הבעיה
+# נתיב src
 current_file = Path(__file__)
-project_root = current_file.parent.parent.parent  # חזור 3 תיקיות
-src_path = project_root / "src"
+src_path = current_file.parent.parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
-# ייבוא המודולים שלנו - עכשיו בלי relative imports
 try:
-    # ייבוא ישיר ללא נקודות
     from detectors.basic_detector import BasicPIIDetector, SensitivityLevel
     from processors.image_processor import ImageProcessor
     from processors.pdf_processor import PDFProcessor
+    from processors.word_processor import WordProcessor
     detector_available = True
-    print("✅ מודולים נטענו בהצלחה")
+    logging.info("Modules loaded OK")
 except ImportError as e:
-    st.error(f"❌ שגיאה בייבוא מודולים: {e}")
-    st.info("💡 ודא שכל הקבצים נמצאים במקום הנכון")
     detector_available = False
-    print(f"❌ Import error: {e}")
+    logging.error(f"Import error: {e}")
 
-# הגדרת הדף
 st.set_page_config(
-    page_title="זיהוי מידע אישי רגיש - מתקדם",
+    page_title="זיהוי מידע אישי רגיש",
     page_icon="🔒",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# CSS מותאם
 st.markdown("""
 <style>
-    .main-header {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    
-    .success-box {
-        background: #d4edda;
-        border: 1px solid #c3e6cb;
-        color: #155724;
-        padding: 1rem;
-        border-radius: 5px;
-        margin: 1rem 0;
-    }
-    
-    .warning-box {
-        background: #fff3cd;
-        border: 1px solid #ffeaa7;
-        color: #856404;
-        padding: 1rem;
-        border-radius: 5px;
-        margin: 1rem 0;
-    }
-    
-    .error-box {
-        background: #f8d7da;
-        border: 1px solid #f5c6cb;
-        color: #721c24;
-        padding: 1rem;
-        border-radius: 5px;
-        margin: 1rem 0;
-    }
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap');
+html, body, [class*="css"] { font-family: 'Rubik', sans-serif !important; }
+
+/* ── HIDE default Streamlit chrome ── */
+#MainMenu, footer, header { visibility: hidden; }
+.block-container { padding-top: 1.5rem !important; max-width: 1200px; }
+
+/* ── HERO ── */
+.hero {
+    background: linear-gradient(135deg, #1e1b4b 0%, #312e81 40%, #1e3a5f 100%);
+    border-radius: 18px;
+    padding: 2.2rem 2rem;
+    text-align: center;
+    margin-bottom: 2rem;
+    border: 1px solid rgba(139,92,246,.35);
+    box-shadow: 0 0 60px rgba(139,92,246,.12);
+}
+.hero h1 {
+    margin: 0 0 .4rem;
+    font-size: 2rem;
+    font-weight: 700;
+    color: #f1f5f9;
+    letter-spacing: -.5px;
+}
+.hero p { margin: 0; color: #94a3b8; font-size: .95rem; }
+
+/* ── CARDS ── */
+.card {
+    background: #1e2340;
+    border-radius: 16px;
+    padding: 1.4rem 1.4rem 1.6rem;
+    border: 1px solid rgba(255,255,255,.07);
+    margin-bottom: 1rem;
+    transition: border-color .25s, box-shadow .25s;
+}
+.card:hover { border-color: rgba(139,92,246,.4); box-shadow: 0 6px 30px rgba(139,92,246,.12); }
+
+.card-accent { height: 3px; border-radius: 3px; margin: -.2rem -.1rem 1.1rem; }
+.acc-purple { background: linear-gradient(90deg,#8b5cf6,#a78bfa); }
+.acc-cyan   { background: linear-gradient(90deg,#06b6d4,#67e8f9); }
+.acc-red    { background: linear-gradient(90deg,#ef4444,#f87171); }
+.acc-blue   { background: linear-gradient(90deg,#2563eb,#60a5fa); }
+
+.card-head { display:flex; align-items:center; gap:.7rem; margin-bottom:1rem; }
+.card-head .icon { font-size:1.6rem; line-height:1; }
+.card-head h3 { margin:0; font-size:1rem; font-weight:600; color:#e2e8f0; }
+.card-head p  { margin:0; font-size:.78rem; color:#64748b; }
+
+/* ── DIVIDER ── */
+.divider { border:none; border-top:1px solid rgba(255,255,255,.06); margin:1.2rem 0 1.6rem; }
+
+/* ── Streamlit widget overrides ── */
+div[data-testid="stFileUploader"] > div {
+    border: 1.5px dashed rgba(139,92,246,.4) !important;
+    border-radius: 12px !important;
+    background: rgba(139,92,246,.04) !important;
+}
+div[data-testid="stFileUploader"] > div:hover {
+    border-color: rgba(139,92,246,.75) !important;
+    background: rgba(139,92,246,.08) !important;
+}
+textarea { border-radius: 10px !important; }
+div[data-testid="stMetricValue"] { font-size: 1.5rem !important; font-weight: 700 !important; }
+
+/* Buttons */
+.stButton > button {
+    background: linear-gradient(135deg,#8b5cf6,#7c3aed) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    font-size: .9rem !important;
+    padding: .5rem 1.4rem !important;
+    width: 100%;
+    transition: opacity .2s, transform .15s !important;
+}
+.stButton > button:hover {
+    opacity: .88 !important;
+    transform: translateY(-1px) !important;
+}
+
+/* expander */
+details summary { font-size:.85rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# כותרת ראשית
+# ── Guard ─────────────────────────────────────────────────────────────────
+if not detector_available:
+    st.error("❌ שגיאה בטעינת המודולים. ודא שכל הקבצים נמצאים במקום הנכון.")
+    st.stop()
+
+# ── Processors ────────────────────────────────────────────────────────────
+@st.cache_resource
+def load_processors():
+    return (BasicPIIDetector(), ImageProcessor(), PDFProcessor(), WordProcessor())
+
+detector, image_proc, pdf_proc, word_proc = load_processors()
+
+# ── Helpers ───────────────────────────────────────────────────────────────
+_ICONS = {'LOW': '🟢', 'MEDIUM': '🟡', 'HIGH': '🟠', 'CRITICAL': '🔴'}
+_HEB   = {'LOW': 'נמוכה', 'MEDIUM': 'בינונית', 'HIGH': 'גבוהה', 'CRITICAL': 'קריטית'}
+
+def show_results(results):
+    if not results or not results.get('matches'):
+        st.success("✅ לא נמצא מידע רגיש")
+        return
+
+    sens  = results['overall_sensitivity'].name
+    count = results['total_matches']
+    icon  = _ICONS.get(sens, '⚪')
+
+    msg = f"{icon} זוהו **{count}** פריטי מידע רגיש — חומרה: **{_HEB.get(sens, sens)}**"
+    if sens == 'CRITICAL':  st.error(f"🚨 {msg}")
+    elif sens == 'HIGH':    st.warning(f"⚠️ {msg}")
+    else:                   st.info(f"ℹ️ {msg}")
+
+    rows = [{'#': i,
+             'מידע': m.text,
+             'קטגוריה': m.category.replace('_',' ').title(),
+             'חומרה': f"{_ICONS.get(m.sensitivity.name,'⚪')} {_HEB.get(m.sensitivity.name,'')}",
+             'ודאות': f"{m.confidence:.0%}"}
+            for i, m in enumerate(results['matches'], 1)]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=220)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("סה״כ ממצאים", count)
+    c2.metric("קריטיים 🔴", sum(1 for m in results['matches'] if m.sensitivity==SensitivityLevel.CRITICAL))
+    c3.metric("גבוהים 🟠",   sum(1 for m in results['matches'] if m.sensitivity==SensitivityLevel.HIGH))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# HERO
+# ══════════════════════════════════════════════════════════════════════════
 st.markdown("""
-<div class="main-header">
-    <h1>🔒 מערכת זיהוי מידע אישי רגיש - מתקדם</h1>
-    <p>תמיכה בטקסט, תמונות, PDF ומסמכי Office</p>
+<div class="hero">
+    <h1>🔒 מערכת זיהוי מידע אישי רגיש</h1>
+    <p>העלה כל קובץ — המערכת תחלץ טקסט ותזהה מידע רגיש אוטומטית</p>
 </div>
 """, unsafe_allow_html=True)
 
-if not detector_available:
-    st.stop()
 
-# יצירת המזהים
-@st.cache_resource
-def load_processors():
-    detector = BasicPIIDetector()
-    image_processor = ImageProcessor()
-    pdf_processor = PDFProcessor()
-    return detector, image_processor, pdf_processor
+# ══════════════════════════════════════════════════════════════════════════
+# ROW 1 — TEXT  |  IMAGE
+# ══════════════════════════════════════════════════════════════════════════
+col_l, col_r = st.columns(2, gap="large")
 
-detector, image_processor, pdf_processor = load_processors()
+# ────── TEXT ──────────────────────────────────────────────────────────────
+with col_l:
+    st.markdown("""
+    <div class="card">
+      <div class="card-accent acc-purple"></div>
+      <div class="card-head">
+        <span class="icon">📝</span>
+        <div><h3>טקסט חופשי</h3><p>הכנס או הדבק טקסט לניתוח ישיר</p></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# תפריט צד
-st.sidebar.header("🎛️ אפשרויות ניתוח")
-analysis_type = st.sidebar.selectbox(
-    "בחר סוג התוכן:",
-    [
-        "📝 טקסט חופשי",
-        "🖼️ תמונה (OCR)",
-        "📄 קובץ PDF",
-        "📁 קובץ טקסט"
-    ]
-)
-
-# פונקציות עזר
-def display_pii_results(results, source_info=""):
-    """הצגת תוצאות זיהוי PII"""
-
-    if not results or not results.get('matches'):
-        st.success("✅ **מצוין!** לא נמצא מידע רגיש")
-        return
-
-    # הצגת סיכום
-    sensitivity_colors = {
-        'LOW': '🟢',
-        'MEDIUM': '🟡',
-        'HIGH': '🟠',
-        'CRITICAL': '🔴'
+    samples = {
+        "— בחר דוגמה —": "",
+        "פרטים אישיים":  "שם: דוד לוי | ת.ז: 123456789 | טל: 052-1234567 | מייל: david@gmail.com",
+        "מידע רפואי":    "חולה סוכרת סוג 2, מקבל טיפול פסיכולוגי שבועי, ביטוח בריאות פעיל.",
+        "מידע פיננסי":   "משכורת: 12,000 ₪ | חוב: 50,000 ₪ | כרטיס: 4580-1234-5678-9012",
     }
+    sel = st.selectbox("דוגמה מהירה:", list(samples.keys()), key="sel_text")
+    txt = st.text_area("טקסט:", value=samples[sel], height=155,
+                       placeholder="הקלד או הדבק כאן...", key="ta_text",
+                       label_visibility="collapsed")
+    if st.button("🔍 נתח טקסט", key="btn_text"):
+        if txt.strip():
+            with st.spinner("מנתח..."):
+                show_results(detector.analyze_text(txt))
+        else:
+            st.warning("אנא הזן טקסט")
 
-    overall_sens = results['overall_sensitivity'].name
-    color_icon = sensitivity_colors[overall_sens]
+# ────── IMAGE ─────────────────────────────────────────────────────────────
+with col_r:
+    st.markdown("""
+    <div class="card">
+      <div class="card-accent acc-cyan"></div>
+      <div class="card-head">
+        <span class="icon">🖼️</span>
+        <div><h3>תמונה / OCR</h3><p>JPG · PNG · BMP · TIFF — קריאת טקסט אוטומטית</p></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    if overall_sens == 'CRITICAL':
-        st.error(f"""
-        **🚨 {results['summary']}**
-        
-        רמת רגישות: {color_icon} **{overall_sens}**
-        
-        **מידע קריטי זוהה! מומלץ מאוד לא לשתף את התוכן הזה.**
-        """)
-    elif overall_sens == 'HIGH':
-        st.warning(f"""
-        **⚠️ {results['summary']}**
-        
-        רמת רגישות: {color_icon} **{overall_sens}**
-        """)
-    else:
-        st.info(f"""
-        **ℹ️ {results['summary']}**
-        
-        רמת רגישות: {color_icon} **{overall_sens}**
-        """)
-
-    # פירוט הממצאים
-    st.subheader("🔍 פירוט הממצאים")
-
-    matches_data = []
-    for i, match in enumerate(results['matches'], 1):
-        sensitivity_icon = sensitivity_colors[match.sensitivity.name]
-        category_display = match.category.replace('_', ' ').replace('keyword ', '').title()
-
-        matches_data.append({
-            '#': i,
-            'מידע שנמצא': f"**{match.text}**",
-            'קטגוריה': category_display,
-            'רמת רגישות': f"{sensitivity_icon} {match.sensitivity.name}",
-            'רמת ודאות': f"{match.confidence:.0%}",
-            'מיקום בטקסט': f"תווים {match.start_pos}-{match.end_pos}"
-        })
-
-    df = pd.DataFrame(matches_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-    # סטטיסטיקות
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric("📊 סה״כ ממצאים", len(results['matches']))
-
-    with col2:
-        # ספירת ממצאים קריטיים
-        critical_count = sum(1 for m in results['matches'] if m.sensitivity == SensitivityLevel.CRITICAL)
-        st.metric("🔴 ממצאים קריטיים", critical_count)
-
-    with col3:
-        # ספירת ממצאים ברמה גבוהה
-        high_count = sum(1 for m in results['matches'] if m.sensitivity == SensitivityLevel.HIGH)
-        st.metric("🟠 ממצאים ברמה גבוהה", high_count)
-
-    # המלצות
-    st.subheader("💡 המלצות")
-    if critical_count > 0:
-        st.error("""
-        🚨 **פעולות מומלצות:**
-        - הסר מיידית מספרי ת.ז וכרטיסי אשראי
-        - אל תשתף את התוכן הזה בפלטפורמות ציבוריות
-        - שקול הצפנה אם אתה חייב לשמור את המידע
-        """)
-    elif high_count > 0:
-        st.warning("""
-        ⚠️ **שים לב:**
-        - בדוק אם באמת צריך לשתף מידע אישי זה
-        - העסק בהסתרת או החלפת המידע הרגיש
-        - ודא שמי שמקבל את המידע מוסמך לכך
-        """)
-
-def process_text_input():
-    """עיבוד טקסט ישיר"""
-    st.header("📝 ניתוח טקסט חופשי")
-
-    # דוגמאות מוכנות
-    examples = {
-        "🆔 פרטים אישיים": """שלום, אני דוד לוי ותעודת הזהות שלי היא 123456789.
-אפשר להתקשר אליי ב-052-1234567 או לכתוב ל david.levi@gmail.com
-אני גר ברחוב הרצל 15 בתל אביב מיקוד 62739.""",
-
-        "🏥 מידע רפואי": """השבוע הלכתי לרופא בבית החולים איכילוב.
-האבחנה שלי היא סוכרת סוג 2 ואני צריך לקחת תרופה יומית.
-הביטוח בריאות מכסה את הטיפול הפסיכולוגי.""",
-
-        "💰 מידע פיננסי": """המשכורת שלי היא 12,000 שקל בחודש.
-יש לי חוב בבנק של 50,000 שקל ומשכנתא של 800,000 שקל.
-מספר החשבון 1234567890 וכרטיס אשראי 4580-1234-5678-9012.""",
-
-        "📧 מידע יצירת קשר": """ניתן ליצור קשר במספרים:
-בית: 03-1234567, נייד: 052-9876543, עבודה: 02-6543210
-אימיילים: work@company.co.il, personal@gmail.com"""
-    }
-
-    selected_example = st.selectbox(
-        "🎯 בחר דוגמה או כתוב בעצמך:",
-        ["✍️ כתוב בעצמך"] + list(examples.keys())
-    )
-
-    default_text = examples.get(selected_example, "") if selected_example != "✍️ כתוב בעצמך" else ""
-
-    user_text = st.text_area(
-        "הכנס טקסט לניתוח:",
-        value=default_text,
-        height=200,
-        placeholder="הקלד או הדבק כאן טקסט לבדיקת מידע רגיש...",
-        help="הזן כל טקסט והמערכת תזהה מידע אישי רגיש"
-    )
-
-    col1, col2 = st.columns([1, 4])
-
-    with col1:
-        if st.button("🔍 נתח טקסט", type="primary"):
-            if user_text.strip():
-                with st.spinner("🔍 מנתח טקסט..."):
-                    results = detector.analyze_text(user_text)
-
-                st.subheader("📊 תוצאות הניתוח")
-                display_pii_results(results)
-
-                # הצגת סטטיסטיקות נוספות
-                st.sidebar.subheader("📈 סטטיסטיקות טקסט")
-                st.sidebar.metric("📄 אורך טקסט", f"{len(user_text)} תווים")
-                st.sidebar.metric("📝 מספר מילים", len(user_text.split()))
+    img_file = st.file_uploader("", type=['jpg','jpeg','png','bmp','tiff','tif'],
+                                key="up_img", label_visibility="collapsed")
+    if img_file:
+        st.image(img_file, use_container_width=True)
+        if st.button("🔍 נתח תמונה", key="btn_img"):
+            with st.spinner("OCR..."):
+                ocr = image_proc.extract_text_from_image(img_file.read(), img_file.name)
+            if ocr['success'] and ocr['text'].strip():
+                with st.expander("📝 טקסט שחולץ"):
+                    st.code(ocr['text'][:600], language=None)
+                with st.spinner("מזהה מידע..."):
+                    show_results(detector.analyze_text(ocr['text']))
+                st.caption(f"ודאות OCR: {ocr['confidence']:.1f}%  |  {len(ocr['text'])} תווים")
             else:
-                st.warning("⚠️ אנא הזן טקסט לניתוח")
+                st.warning("לא נמצא טקסט בתמונה")
 
-def process_image_input():
-    """עיבוד תמונות עם OCR"""
-    st.header("🖼️ ניתוח תמונה (OCR)")
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-    st.info("""
-    💡 **הוראות שימוש:**
-    - העלה תמונה עם טקסט (צילום מסמך, תמונה סרוקה וכו')
-    - המערכת תקרא את הטקסט ותחפש מידע רגיש
-    - פורמטים נתמכים: JPG, PNG, BMP, TIFF
-    """)
 
-    uploaded_image = st.file_uploader(
-        "בחר תמונה:",
-        type=['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif'],
-        help="העלה תמונה עם טקסט לזיהוי מידע רגיש"
-    )
+# ══════════════════════════════════════════════════════════════════════════
+# ROW 2 — PDF  |  WORD
+# ══════════════════════════════════════════════════════════════════════════
+col_p, col_w = st.columns(2, gap="large")
 
-    if uploaded_image is not None:
-        # הצגת התמונה
-        col1, col2 = st.columns([1, 1])
+# ────── PDF ───────────────────────────────────────────────────────────────
+with col_p:
+    st.markdown("""
+    <div class="card">
+      <div class="card-accent acc-red"></div>
+      <div class="card-head">
+        <span class="icon">📄</span>
+        <div><h3>קובץ PDF</h3><p>טקסט רגיל · PDF סרוק · תמונות מוטבעות</p></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-        with col1:
-            st.image(uploaded_image, caption=f"תמונה: {uploaded_image.name}", use_container_width=True)
-
-            if st.button("🔍 נתח תמונה", type="primary"):
-                with st.spinner("🖼️ מבצע OCR..."):
-                    # קריאת התמונה
-                    image_bytes = uploaded_image.read()
-
-                    # OCR
-                    ocr_result = image_processor.extract_text_from_image(
-                        image_bytes, uploaded_image.name
-                    )
-
-                with col2:
-                    if ocr_result['success']:
-                        st.success(f"✅ OCR הושלם! ודאות: {ocr_result['confidence']:.1f}%")
-
-                        extracted_text = ocr_result['text']
-
-                        if extracted_text.strip():
-                            # הצגת הטקסט שחולץ
-                            with st.expander("📝 טקסט שחולץ מהתמונה"):
-                                st.text_area("", extracted_text, height=150, disabled=True)
-
-                            # ניתוח PII
-                            with st.spinner("🔍 מחפש מידע רגיש..."):
-                                pii_results = detector.analyze_text(extracted_text)
-
-                            st.subheader("📊 תוצאות זיהוי מידע רגיש")
-                            display_pii_results(pii_results, f"תמונה: {uploaded_image.name}")
-
-                            # סטטיסטיקות OCR
-                            st.sidebar.subheader("🖼️ סטטיסטיקות OCR")
-                            st.sidebar.metric("📄 תווים שחולצו", len(extracted_text))
-                            st.sidebar.metric("📝 מילים", len(extracted_text.split()))
-                            st.sidebar.metric("🎯 רמת ודאות", f"{ocr_result['confidence']:.1f}%")
-
-                        else:
-                            st.warning("⚠️ לא נמצא טקסט בתמונה או שאיכות ה-OCR נמוכה")
-                    else:
-                        st.error(f"❌ שגיאה ב-OCR: {ocr_result.get('error', 'לא ידוע')}")
-
-def process_pdf_input():
-    """עיבוד קבצי PDF"""
-    st.header("📄 ניתוח קובץ PDF")
-
-    st.info("""
-    💡 **יכולות PDF:**
-    - קריאת PDF רגיל עם טקסט
-    - OCR למסמכים סרוקים
-    - תמיכה במסמכים רב-עמודיים
-    - זיהוי אוטומטי של סוג המסמך
-    """)
-
-    uploaded_pdf = st.file_uploader(
-        "בחר קובץ PDF:",
-        type=['pdf'],
-        help="העלה קובץ PDF לזיהוי מידע רגיש"
-    )
-
-    if uploaded_pdf is not None:
-        pdf_bytes = uploaded_pdf.read()
-
-        # מידע על הקובץ
-        st.success(f"✅ קובץ {uploaded_pdf.name} נטען ({len(pdf_bytes):,} bytes)")
-
-        col1, col2 = st.columns([1, 1])
-
-        with col1:
-            if st.button("🔍 נתח PDF", type="primary"):
-                with st.spinner("📄 מעבד PDF..."):
-                    pdf_result = pdf_processor.extract_text_from_pdf(
-                        pdf_bytes, uploaded_pdf.name
-                    )
-
-                if pdf_result['success']:
-                    st.success(f"""
-                    ✅ PDF עובד בהצלחה!
-                    - **עמודים:** {pdf_result['pages']}
-                    - **שיטה:** {pdf_result['method']}
-                    - **תווים:** {pdf_result['character_count']:,}
-                    """)
-
-                    if pdf_result.get('ocr_pages', 0) > 0:
-                        st.info(f"🖼️ OCR בוצע על {pdf_result['ocr_pages']} עמודים")
-
-                    extracted_text = pdf_result['text']
-
-                    if extracted_text.strip():
-                        # הצגת קטע מהטקסט
-                        with st.expander("📝 דוגמה מהטקסט שחולץ"):
-                            preview_text = extracted_text[:1000] + "..." if len(extracted_text) > 1000 else extracted_text
-                            st.text_area("", preview_text, height=200, disabled=True)
-
-                        # ניתוח PII
-                        with st.spinner("🔍 מחפש מידע רגיש..."):
-                            pii_results = detector.analyze_text(extracted_text)
-
-                        st.subheader("📊 תוצאות זיהוי מידע רגיש")
-                        display_pii_results(pii_results, f"PDF: {uploaded_pdf.name}")
-
-                        # סטטיסטיקות PDF
-                        st.sidebar.subheader("📄 סטטיסטיקות PDF")
-                        st.sidebar.metric("📄 עמודים", pdf_result['pages'])
-                        st.sidebar.metric("📝 תווים", f"{pdf_result['character_count']:,}")
-                        st.sidebar.metric("📖 מילים", f"{pdf_result['word_count']:,}")
-                        if pdf_result.get('ocr_pages'):
-                            st.sidebar.metric("🖼️ עמודי OCR", pdf_result['ocr_pages'])
-                    else:
-                        st.warning("⚠️ לא נמצא טקסט ב-PDF או שהוא מוגן")
+    pdf_file = st.file_uploader("", type=['pdf'], key="up_pdf", label_visibility="collapsed")
+    if pdf_file:
+        st.caption(f"📁 {pdf_file.name}  |  {len(pdf_file.getvalue()):,} bytes")
+        if st.button("🔍 נתח PDF", key="btn_pdf"):
+            with st.spinner("מעבד PDF..."):
+                res = pdf_proc.extract_text_from_pdf(pdf_file.getvalue(), pdf_file.name)
+            if res['success']:
+                parts = [f"{res['pages']} עמודים", f"{res['character_count']:,} תווים"]
+                if res.get('ocr_pages', 0) > 0:
+                    parts.append(f"OCR: {res['ocr_pages']} עמודים/תמונות")
+                st.caption("  |  ".join(parts))
+                if res['text'].strip():
+                    with st.expander("📝 תצוגה מקדימה"):
+                        st.code(res['text'][:800] + ("…" if len(res['text'])>800 else ""), language=None)
+                    with st.spinner("מזהה מידע..."):
+                        show_results(detector.analyze_text(res['text']))
                 else:
-                    st.error(f"❌ שגיאה בעיבוד PDF: {pdf_result.get('error', 'לא ידוע')}")
+                    st.warning("לא נמצא טקסט ב-PDF")
+            else:
+                st.error(f"שגיאה: {res.get('error','לא ידוע')}")
 
-def process_text_file_input():
-    """עיבוד קבצי טקסט"""
-    st.header("📁 ניתוח קובץ טקסט")
+# ────── WORD ──────────────────────────────────────────────────────────────
+with col_w:
+    st.markdown("""
+    <div class="card">
+      <div class="card-accent acc-blue"></div>
+      <div class="card-head">
+        <span class="icon">📘</span>
+        <div><h3>מסמך Word</h3><p>DOCX — פסקאות · טבלאות · כותרות</p></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader(
-        "בחר קובץ טקסט:",
-        type=['txt', 'rtf'],
-        help="העלה קובץ טקסט לזיהוי מידע רגיש"
-    )
+    word_file = st.file_uploader("", type=['docx'], key="up_word", label_visibility="collapsed")
+    if word_file:
+        st.caption(f"📁 {word_file.name}  |  {len(word_file.getvalue()):,} bytes")
+        if st.button("🔍 נתח Word", key="btn_word"):
+            with st.spinner("מעבד Word..."):
+                res = word_proc.extract_text_from_word(word_file.getvalue(), word_file.name)
+            if res['success']:
+                parts = [f"{res['paragraphs']} פסקאות", f"{res['tables']} טבלאות",
+                         f"{res['character_count']:,} תווים"]
+                if res.get('has_images'):
+                    parts.append(f"{res['image_count']} תמונות")
+                st.caption("  |  ".join(parts))
+                if res['text'].strip():
+                    with st.expander("📝 תצוגה מקדימה"):
+                        st.code(res['text'][:800] + ("…" if len(res['text'])>800 else ""), language=None)
+                    with st.spinner("מזהה מידע..."):
+                        show_results(detector.analyze_text(res['text']))
+                else:
+                    st.warning("לא נמצא טקסט במסמך")
+            else:
+                st.error(f"שגיאה: {res.get('error','לא ידוע')}")
 
-    if uploaded_file is not None:
-        try:
-            content = uploaded_file.read().decode('utf-8')
 
-            st.success(f"✅ קובץ {uploaded_file.name} נטען בהצלחה")
-
-            # תצוגה מקדימה
-            with st.expander("👁️ הצג תוכן הקובץ"):
-                preview = content[:2000] + "..." if len(content) > 2000 else content
-                st.text_area("תוכן הקובץ:", preview, height=300, disabled=True)
-
-            if st.button("🔍 נתח קובץ", type="primary"):
-                with st.spinner("🔍 מנתח קובץ..."):
-                    results = detector.analyze_text(content)
-
-                st.subheader("📊 תוצאות הניתוח")
-                display_pii_results(results, f"קובץ: {uploaded_file.name}")
-
-                # סטטיסטיקות
-                st.sidebar.subheader("📁 סטטיסטיקות קובץ")
-                st.sidebar.metric("📄 גודל", f"{len(content):,} תווים")
-                st.sidebar.metric("📝 מילים", f"{len(content.split()):,}")
-                st.sidebar.metric("📄 שורות", len(content.split('\n')))
-
-        except UnicodeDecodeError:
-            st.error("❌ שגיאה בקריאת הקובץ. ודא שזה קובץ טקסט בקידוד UTF-8")
-        except Exception as e:
-            st.error(f"❌ שגיאה בעיבוד הקובץ: {str(e)}")
-
-# הצגת התוכן לפי בחירת המשתמש
-if analysis_type == "📝 טקסט חופשי":
-    process_text_input()
-elif analysis_type == "🖼️ תמונה (OCR)":
-    process_image_input()
-elif analysis_type == "📄 קובץ PDF":
-    process_pdf_input()
-elif analysis_type == "📁 קובץ טקסט":
-    process_text_file_input()
-
-# מידע נוסף בסיידבר
-st.sidebar.markdown("---")
-st.sidebar.header("📚 אודות המערכת")
-st.sidebar.info("""
-**גרסה:** 2.0 - מתקדם
-
-**יכולות זיהוי:**
-• 🆔 תעודות זהות ישראליות
-• 📞 מספרי טלפון (כל הפורמטים)
-• 📧 כתובות אימייל
-• 💳 מספרי כרטיס אשראי
-• 🏥 מידע רפואי רגיש
-• 💰 מידע פיננסי
-• 🏠 פרטים אישיים
-
-**טכנולוגיות:**
-• OCR עם Tesseract
-• עיבוד PDF מתקדם
-• זיהוי דפוסים ברגקסים
-• ניתוח הקשר חכם
-""")
-
-st.sidebar.markdown("---")
-st.sidebar.header("💻 מידע טכני")
-st.sidebar.code("""
-# הפעלת הממשק:
-streamlit run src/ui/streamlit_app.py
-
-# דרישות מערכת:
-- Python 3.8+
-- Tesseract OCR
-- 2GB RAM מומלץ
-""")
-
-# כותרת תחתונה
-st.markdown("---")
+# ════════════════════ FOOTER ═══════════════════════════════════════════════
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
 st.markdown("""
-<div style='text-align: center; color: #666;'>
-<small>🔒 מערכת זיהוי מידע אישי רגיש | פרויקט גמר | גרסה 2.0</small><br>
-<small>💡 מערכת זו מיועדת לצורכי בדיקה ולמידה בלבד</small>
+<div style="text-align:center;color:#475569;font-size:.78rem;padding-bottom:1rem">
+    🔒 מערכת זיהוי מידע אישי רגיש &nbsp;|&nbsp; פרויקט גמר &nbsp;|&nbsp; גרסה 3.1<br>
+    <span style="font-size:.72rem">מיועדת לצורכי בדיקה ולמידה בלבד</span>
 </div>
 """, unsafe_allow_html=True)
