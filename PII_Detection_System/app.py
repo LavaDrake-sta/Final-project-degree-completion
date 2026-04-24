@@ -2,6 +2,7 @@
 PII Detection System - Streamlit App
 קובץ הפעלה פשוט ללא בעיות imports
 """
+# בדיקה נוספת להעלאה לגיט (Test for Git Push)
 
 import streamlit as st
 import pandas as pd
