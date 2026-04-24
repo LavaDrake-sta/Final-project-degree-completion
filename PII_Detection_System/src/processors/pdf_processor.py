@@ -94,14 +94,24 @@ class PDFProcessor:
             extracted_text = ""
             page_texts = []
             images_processed = 0
+            
+            # ניתוח סוג המסמך מראש מתוך המטא-דאטה
+            metadata = doc.metadata or {}
+            creator = str(metadata.get('creator', '')).lower()
+            producer = str(metadata.get('producer', '')).lower()
+            is_from_word = 'word' in creator or 'word' in producer or 'office' in creator or 'office' in producer
+            
+            native_text_chars = 0
+            ocr_text_chars = 0
 
-            self.logger.info(f"📄 עיבוד PDF: {doc.page_count} עמודים")
+            self.logger.info(f"📄 עיבוד PDF: {doc.page_count} עמודים, נוצר מ-Word: {is_from_word}")
 
             for page_num in range(doc.page_count):
                 page = doc[page_num]
 
                 # נסה לחלץ טקסט רגיל
                 page_text = page.get_text()
+                native_text_chars += len(page_text.strip())
 
                 # אם אין טקסט כלל (מסמך סרוק לחלוטין), נסה OCR על כל העמוד
                 if len(page_text.strip()) < 10 and self.ocr_available:
@@ -109,12 +119,14 @@ class PDFProcessor:
                     ocr_text = self._ocr_pdf_page(page)
                     if ocr_text:
                         page_text = ocr_text
+                        ocr_text_chars += len(ocr_text.strip())
                         images_processed += 1
                 elif self.ocr_available:
                     # גם אם יש טקסט, בדוק אם יש תמונות מוטבעות עם טקסט נוסף
                     embedded_ocr_text = self._extract_text_from_embedded_images(page, page_num)
                     if embedded_ocr_text:
                         page_text += "\n" + embedded_ocr_text
+                        ocr_text_chars += len(embedded_ocr_text.strip())
                         images_processed += 1
 
                 page_texts.append(page_text)
@@ -125,6 +137,28 @@ class PDFProcessor:
             # ניקוי הטקסט
             cleaned_text = self._clean_pdf_text(extracted_text)
 
+            # החלטה על סוג המסמך
+            if is_from_word:
+                if ocr_text_chars > 0 and images_processed > 0:
+                    pdf_type = "word_with_images"
+                    pdf_type_desc = "מסמך Word שהומר ל-PDF (מכיל גם תמונות שעברו סריקה)"
+                else:
+                    pdf_type = "word_native"
+                    pdf_type_desc = "מסמך Word שהומר ל-PDF (טקסט מקורי)"
+            else:
+                if native_text_chars < 50 and ocr_text_chars > 0:
+                    pdf_type = "scanned"
+                    pdf_type_desc = "מסמך סרוק (עבר זיהוי תווים - OCR)"
+                elif native_text_chars >= 50 and ocr_text_chars > 0:
+                    pdf_type = "mixed"
+                    pdf_type_desc = "מסמך מעורב (טקסט מקורי + תמונות שעברו סריקה)"
+                elif native_text_chars >= 50:
+                    pdf_type = "native"
+                    pdf_type_desc = "מסמך PDF רגיל (טקסט מקורי)"
+                else:
+                    pdf_type = "unknown"
+                    pdf_type_desc = "סוג מסמך לא ידוע"
+
             result = {
                 'success': True,
                 'text': cleaned_text,
@@ -134,7 +168,10 @@ class PDFProcessor:
                 'ocr_pages': images_processed,
                 'page_texts': page_texts,
                 'character_count': len(cleaned_text),
-                'word_count': len(cleaned_text.split()) if cleaned_text else 0
+                'word_count': len(cleaned_text.split()) if cleaned_text else 0,
+                'pdf_type': pdf_type,
+                'pdf_type_desc': pdf_type_desc,
+                'is_from_word': is_from_word
             }
 
             self.logger.info(f"✅ PyMuPDF: {len(cleaned_text)} תווים מ-{len(page_texts)} עמודים")

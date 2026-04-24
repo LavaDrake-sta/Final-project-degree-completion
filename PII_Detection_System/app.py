@@ -149,6 +149,10 @@ with tab3:
 
             if pdf_result['success']:
                 st.success(f"✅ PDF עובד! {pdf_result['pages']} עמודים")
+                
+                # הצגת סוג המסמך שזוהה
+                if 'pdf_type_desc' in pdf_result:
+                    st.info(f"💡 **זיהוי סוג מסמך:** {pdf_result['pdf_type_desc']}")
 
                 extracted_text = pdf_result['text']
 
