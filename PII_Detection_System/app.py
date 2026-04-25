@@ -2,6 +2,7 @@
 PII Detection System - Streamlit App
 קובץ הפעלה פשוט ללא בעיות imports
 """
+# בדיקה נוספת להעלאה לגיט (Test for Git Push)
 
 import streamlit as st
 import pandas as pd
@@ -29,6 +30,14 @@ except ImportError as e:
     st.error(f"❌ שגיאה: {e}")
     st.stop()
 
+# ניסיון ייבוא המערכת החדשה
+try:
+    from pipeline import PIIPipeline
+    AI_PIPELINE_AVAILABLE = True
+except ImportError as e:
+    AI_PIPELINE_AVAILABLE = False
+    st.sidebar.warning(f"⚠️ מערכת AI מתקדמת חסרה: {e}. הרץ pip install -r requirements.txt")
+
 # הגדרת הדף
 st.set_page_config(
     page_title="זיהוי מידע אישי רגיש",
@@ -47,13 +56,21 @@ def load_processors():
     detector = BasicPIIDetector()
     image_processor = ImageProcessor()
     pdf_processor = PDFProcessor()
-    return detector, image_processor, pdf_processor
+    
+    ai_pipeline = None
+    if AI_PIPELINE_AVAILABLE:
+        try:
+            ai_pipeline = PIIPipeline()
+        except Exception as e:
+            st.error(f"שגיאה בטעינת צינור AI: {e}")
+            
+    return detector, image_processor, pdf_processor, ai_pipeline
 
 
-detector, image_processor, pdf_processor = load_processors()
+detector, image_processor, pdf_processor, ai_pipeline = load_processors()
 
 # תפריט
-tab1, tab2, tab3 = st.tabs(["📝 טקסט", "🖼️ תמונה", "📄 PDF"])
+tab1, tab2, tab3, tab4 = st.tabs(["📝 טקסט", "🖼️ תמונה", "📄 PDF", "🤖 AI Pipeline (Presidio)"])
 
 # טאב טקסט
 with tab1:
@@ -149,6 +166,10 @@ with tab3:
 
             if pdf_result['success']:
                 st.success(f"✅ PDF עובד! {pdf_result['pages']} עמודים")
+                
+                # הצגת סוג המסמך שזוהה
+                if 'pdf_type_desc' in pdf_result:
+                    st.info(f"💡 **זיהוי סוג מסמך:** {pdf_result['pdf_type_desc']}")
 
                 extracted_text = pdf_result['text']
 
@@ -171,6 +192,74 @@ with tab3:
                     st.warning("⚠️ לא נמצא טקסט ב-PDF")
             else:
                 st.error(f"❌ שגיאה בעיבוד PDF: {pdf_result.get('error', 'לא ידוע')}")
+
+# טאב AI Pipeline
+with tab4:
+    st.header("🤖 מערכת זיהוי חכמה מבוססת Presidio")
+    st.write("מערכת מתקדמת מבוססת Microsoft Presidio ומנוע למידת מכונה מקומי (NLP/OCR) שמנתחת כל סוג קובץ ומצנזרת אוטומטית מידע רגיש.")
+    
+    if not AI_PIPELINE_AVAILABLE:
+        st.error("❌ הצינור החכם לא מותקן כראוי. אנא ודא שהרצת `pip install -r requirements.txt`.")
+    else:
+        st.info("העלה כל קובץ (PDF, DOCX, XLSX, תמונה) והמערכת תנתח אותו באופן מלא.")
+        uploaded_ai_file = st.file_uploader(
+            "העלה קובץ לניתוח חכם:",
+            type=['pdf', 'docx', 'xlsx', 'jpg', 'jpeg', 'png'],
+            help="קובץ לניתוח AI"
+        )
+        
+        if uploaded_ai_file:
+            if st.button("🔍 הפעל Pipeline חכם"):
+                with st.spinner("מנתח מסמך בעזרת מודלי AI מקומיים..."):
+                    file_bytes = uploaded_ai_file.read()
+                    
+                    # קריאה לצינור שלנו
+                    ai_report = ai_pipeline.process_file(file_bytes=file_bytes, filename=uploaded_ai_file.name)
+                    
+                if not ai_report["success"]:
+                    st.error(f"❌ שגיאה: {ai_report.get('error')}")
+                else:
+                    st.success(f"✅ עיבוד הושלם! (סוג קובץ: {ai_report['file_type']})")
+                    
+                    eval_data = ai_report["risk_evaluation"]
+                    
+                    # הצגת רמת סיכון
+                    risk_level = eval_data["risk_level"]
+                    if risk_level == "SAFE":
+                        st.success(f"🛡️ רמת סיכון: {risk_level} - {eval_data['summary']}")
+                    elif risk_level == "WARNING":
+                        st.warning(f"⚠️ רמת סיכון: {risk_level} - {eval_data['summary']}")
+                    else:
+                        st.error(f"🚨 רמת סיכון: {risk_level} - {eval_data['summary']}")
+                        
+                    # הצגת טקסט מצונזר
+                    with st.expander("📝 טקסט מצונזר (Anonymized)", expanded=True):
+                        st.text(ai_report.get("anonymized_text", ""))
+                        
+                    # הצגת טבלה של ממצאים
+                    if ai_report["entities"]:
+                        st.subheader("🔍 ישויות רגישות שנמצאו:")
+                        entities_data = []
+                        for i, ent in enumerate(ai_report["entities"], 1):
+                            entities_data.append({
+                                '#': i,
+                                'מידע': ent['text'],
+                                'סוג (Presidio)': ent['entity_type'],
+                                'ודאות': f"{ent['score']:.0%}",
+                                'מיקום': f"{ent['start']}-{ent['end']}"
+                            })
+                        
+                        df_ai = pd.DataFrame(entities_data)
+                        st.dataframe(df_ai, use_container_width=True)
+                        
+                        # כפתור להורדת JSON של הדוח המלא
+                        json_str = ai_pipeline.generate_report_json(ai_report)
+                        st.download_button(
+                            label="📄 הורד דוח JSON",
+                            data=json_str,
+                            file_name=f"ai_pii_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                            mime="application/json"
+                        )
 
 # מידע צד
 st.sidebar.header("📚 אודות")

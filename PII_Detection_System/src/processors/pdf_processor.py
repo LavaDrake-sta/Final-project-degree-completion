@@ -94,21 +94,39 @@ class PDFProcessor:
             extracted_text = ""
             page_texts = []
             images_processed = 0
+            
+            # ניתוח סוג המסמך מראש מתוך המטא-דאטה
+            metadata = doc.metadata or {}
+            creator = str(metadata.get('creator', '')).lower()
+            producer = str(metadata.get('producer', '')).lower()
+            is_from_word = 'word' in creator or 'word' in producer or 'office' in creator or 'office' in producer
+            
+            native_text_chars = 0
+            ocr_text_chars = 0
 
-            self.logger.info(f"📄 עיבוד PDF: {doc.page_count} עמודים")
+            self.logger.info(f"📄 עיבוד PDF: {doc.page_count} עמודים, נוצר מ-Word: {is_from_word}")
 
             for page_num in range(doc.page_count):
                 page = doc[page_num]
 
                 # נסה לחלץ טקסט רגיל
                 page_text = page.get_text()
+                native_text_chars += len(page_text.strip())
 
-                # אם אין טקסט (מסמך סרוק), נסה OCR
+                # אם אין טקסט כלל (מסמך סרוק לחלוטין), נסה OCR על כל העמוד
                 if len(page_text.strip()) < 10 and self.ocr_available:
-                    self.logger.info(f"🔍 עמוד {page_num + 1}: מנסה OCR")
+                    self.logger.info(f"🔍 עמוד {page_num + 1}: אין טקסט - מנסה OCR על העמוד")
                     ocr_text = self._ocr_pdf_page(page)
                     if ocr_text:
                         page_text = ocr_text
+                        ocr_text_chars += len(ocr_text.strip())
+                        images_processed += 1
+                elif self.ocr_available:
+                    # גם אם יש טקסט, בדוק אם יש תמונות מוטבעות עם טקסט נוסף
+                    embedded_ocr_text = self._extract_text_from_embedded_images(page, page_num)
+                    if embedded_ocr_text:
+                        page_text += "\n" + embedded_ocr_text
+                        ocr_text_chars += len(embedded_ocr_text.strip())
                         images_processed += 1
 
                 page_texts.append(page_text)
@@ -119,6 +137,28 @@ class PDFProcessor:
             # ניקוי הטקסט
             cleaned_text = self._clean_pdf_text(extracted_text)
 
+            # החלטה על סוג המסמך
+            if is_from_word:
+                if ocr_text_chars > 0 and images_processed > 0:
+                    pdf_type = "word_with_images"
+                    pdf_type_desc = "מסמך Word שהומר ל-PDF (מכיל גם תמונות שעברו סריקה)"
+                else:
+                    pdf_type = "word_native"
+                    pdf_type_desc = "מסמך Word שהומר ל-PDF (טקסט מקורי)"
+            else:
+                if native_text_chars < 50 and ocr_text_chars > 0:
+                    pdf_type = "scanned"
+                    pdf_type_desc = "מסמך סרוק (עבר זיהוי תווים - OCR)"
+                elif native_text_chars >= 50 and ocr_text_chars > 0:
+                    pdf_type = "mixed"
+                    pdf_type_desc = "מסמך מעורב (טקסט מקורי + תמונות שעברו סריקה)"
+                elif native_text_chars >= 50:
+                    pdf_type = "native"
+                    pdf_type_desc = "מסמך PDF רגיל (טקסט מקורי)"
+                else:
+                    pdf_type = "unknown"
+                    pdf_type_desc = "סוג מסמך לא ידוע"
+
             result = {
                 'success': True,
                 'text': cleaned_text,
@@ -128,7 +168,10 @@ class PDFProcessor:
                 'ocr_pages': images_processed,
                 'page_texts': page_texts,
                 'character_count': len(cleaned_text),
-                'word_count': len(cleaned_text.split()) if cleaned_text else 0
+                'word_count': len(cleaned_text.split()) if cleaned_text else 0,
+                'pdf_type': pdf_type,
+                'pdf_type_desc': pdf_type_desc,
+                'is_from_word': is_from_word
             }
 
             self.logger.info(f"✅ PyMuPDF: {len(cleaned_text)} תווים מ-{len(page_texts)} עמודים")
@@ -211,7 +254,7 @@ class PDFProcessor:
 
     def _ocr_pdf_page(self, page) -> str:
         """
-        OCR לעמוד PDF סרוק
+        OCR לעמוד PDF סרוק (כשאין טקסט כלל בעמוד)
         """
         try:
             if not self.ocr_available:
@@ -235,6 +278,81 @@ class PDFProcessor:
         except Exception as e:
             self.logger.error(f"❌ שגיאה ב-OCR של עמוד: {e}")
             return ""
+
+    def _extract_text_from_embedded_images(self, page, page_num: int) -> str:
+        """
+        חילוץ טקסט מתמונות מוטבעות בתוך עמוד PDF שכבר מכיל טקסט.
+        מטפל במקרה של PDF שמכיל תמונה מוסרקת בתוכו (לא PDF סרוק לחלוטין).
+        """
+        if not self.ocr_available:
+            return ""
+
+        ocr_texts = []
+
+        try:
+            # קבלת רשימת התמונות המוטבעות בעמוד
+            image_list = page.get_images(full=True)
+
+            if not image_list:
+                return ""
+
+            self.logger.info(
+                f"🖼️ עמוד {page_num + 1}: נמצאו {len(image_list)} תמונות מוטבעות - מנסה OCR"
+            )
+
+            doc = page.parent  # הפניה למסמך
+
+            for img_index, img_info in enumerate(image_list):
+                try:
+                    xref = img_info[0]  # מזהה התמונה
+
+                    # חילוץ נתוני התמונה
+                    base_image = doc.extract_image(xref)
+                    if not base_image:
+                        continue
+
+                    img_bytes = base_image["image"]
+                    img_ext = base_image["ext"]  # png / jpeg וכדומה
+
+                    # בדיקת גודל מינימלי - תמונות קטנות הן לרוב אייקונים/לוגו
+                    if len(img_bytes) < 5000:  # פחות מ-5KB
+                        self.logger.debug(
+                            f"  ↳ תמונה {img_index + 1}: קטנה מדי ({len(img_bytes)} bytes), מדלג"
+                        )
+                        continue
+
+                    self.logger.info(
+                        f"  ↳ תמונה {img_index + 1}: מריץ OCR ({img_ext}, {len(img_bytes)} bytes)"
+                    )
+
+                    # OCR על התמונה המוטבעת
+                    ocr_result = self.image_processor.extract_text_from_image(
+                        img_bytes, filename=f"embedded_image_{page_num}_{img_index}"
+                    )
+
+                    if ocr_result['success'] and len(ocr_result['text'].strip()) > 5:
+                        ocr_texts.append(ocr_result['text'].strip())
+                        self.logger.info(
+                            f"  ↳ ✅ OCR הצליח: {len(ocr_result['text'])} תווים"
+                        )
+                    else:
+                        self.logger.debug(f"  ↳ OCR לא מצא טקסט בתמונה {img_index + 1}")
+
+                except Exception as e:
+                    self.logger.warning(f"  ↳ ⚠️ שגיאה בעיבוד תמונה {img_index + 1}: {e}")
+                    continue
+
+        except Exception as e:
+            self.logger.error(f"❌ שגיאה בחילוץ תמונות מוטבעות מעמוד {page_num + 1}: {e}")
+
+        if ocr_texts:
+            combined = "\n".join(ocr_texts)
+            self.logger.info(
+                f"✅ עמוד {page_num + 1}: חולץ טקסט מ-{len(ocr_texts)} תמונות מוטבעות"
+            )
+            return combined
+
+        return ""
 
     def _clean_pdf_text(self, text: str) -> str:
         """
