@@ -25,6 +25,7 @@ try:
     from processors.Excel_Processor import ExcelProcessor
     from redactors.excel_redactor import ExcelRedactor
     from redactors.word_redactor import WordRedactor
+    from redactors.pdf_redactor import PdfRedactor
     detector_available = True
     logging.info("Modules loaded OK")
 except ImportError as e:
@@ -139,6 +140,7 @@ def load_processors():
 detector, image_proc, pdf_proc, word_proc, excel_proc = load_processors()
 redactor_word = WordRedactor()
 redactor_excel = ExcelRedactor()
+redactor_pdf = PdfRedactor()
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 _ICONS = {'LOW': '🟢', 'MEDIUM': '🟡', 'HIGH': '🟠', 'CRITICAL': '🔴'}
@@ -280,7 +282,20 @@ with col_p:
                     with st.expander("📝 תצוגה מקדימה"):
                         st.code(res['text'][:800] + ("…" if len(res['text'])>800 else ""), language=None)
                     with st.spinner("מזהה מידע..."):
-                        show_results(detector.analyze_text(res['text']))
+                        pii_res = detector.analyze_text(res['text'])
+                        show_results(pii_res)
+                        
+                    if pii_res and pii_res.get('matches'):
+                        pii_texts = [m.text for m in pii_res['matches']]
+                        with st.spinner("מייצר קובץ מושחר..."):
+                            redacted_bytes = redactor_pdf.redact_pdf(pdf_file.getvalue(), pii_texts)
+                            if redacted_bytes:
+                                st.download_button(
+                                    label="📥 הורד קובץ PDF מושחר",
+                                    data=redacted_bytes,
+                                    file_name=f"redacted_{pdf_file.name}",
+                                    mime="application/pdf"
+                                )
                 else:
                     st.warning("לא נמצא טקסט ב-PDF")
             else:
