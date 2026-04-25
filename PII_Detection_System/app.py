@@ -1,487 +1,557 @@
 """
 PII Detection System - Streamlit App
-קובץ הפעלה פשוט ללא בעיות imports
+פרויקט גמר - זיהוי מידע אישי רגיש
+גרסה עם תצוגה מקדימה לפני השחרה
 """
-# בדיקה נוספת להעלאה לגיט (Test for Git Push)
 
 import streamlit as st
 import pandas as pd
 import sys
 import os
-import pytesseract
-from datetime import datetime
 import io
 import json
+import pytesseract
+from datetime import datetime
 
-# הגדרת Tesseract
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# ─── set_page_config חייב להיות ראשון ────────────────────────────
+st.set_page_config(
+    page_title="מערכת זיהוי PII",
+    page_icon="🔒",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# הוספת src לנתיב
+# ─── Tesseract ────────────────────────────────────────────────────
+TESSERACT_PATH = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+if os.path.exists(TESSERACT_PATH):
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+TESSERACT_OK = os.path.exists(TESSERACT_PATH)
+
+# ─── paths ────────────────────────────────────────────────────────
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-# ייבוא המודולים
+# ─── Basic modules ────────────────────────────────────────────────
 try:
     from detectors.basic_detector import BasicPIIDetector, SensitivityLevel
     from processors.image_processor import ImageProcessor
     from processors.pdf_processor import PDFProcessor
-
-    st.success("✅ מודולים נטענו בהצלחה")
 except ImportError as e:
-    st.error(f"❌ שגיאה: {e}")
+    st.error(f"❌ שגיאת ייבוא: {e}")
     st.stop()
 
-# ניסיון ייבוא המערכת החדשה
+# ─── AI Pipeline ─────────────────────────────────────────────────
+AI_PIPELINE_AVAILABLE = False
 try:
     from pipeline import PIIPipeline
     AI_PIPELINE_AVAILABLE = True
-except ImportError as e:
-    AI_PIPELINE_AVAILABLE = False
-    st.sidebar.warning(f"⚠️ מערכת AI מתקדמת חסרה: {e}. הרץ pip install -r requirements.txt")
+except ImportError:
+    pass
 
-# הגדרת הדף
-st.set_page_config(
-    page_title="זיהוי מידע אישי רגיש",
-    page_icon="🔒",
-    layout="wide"
-)
+# ─── Redactors ───────────────────────────────────────────────────
+REDACTORS_AVAILABLE = False
+try:
+    from redactors import PdfRedactor, WordRedactor, ExcelRedactor, ImageRedactor
+    REDACTORS_AVAILABLE = True
+except ImportError:
+    try:
+        from src.redactors import PdfRedactor, WordRedactor, ExcelRedactor, ImageRedactor
+        REDACTORS_AVAILABLE = True
+    except ImportError:
+        pass
 
-# כותרת
-st.title("🔒 מערכת זיהוי מידע אישי רגיש")
-st.write("**פרויקט גמר** - זיהוי מידע רגיש בטקסט, תמונות ו-PDF")
+# ─── תרגום סוגי ישויות לעברית ────────────────────────────────────
+ENTITY_HEBREW = {
+    # ישראלי
+    "IL_ID":             "תעודת זהות ישראלית",
+    "IL_PHONE":          "מספר טלפון ישראלי",
+    "HEB_ADDRESS":       "כתובת בעברית",
+    # כללי
+    "PERSON":            "שם אדם",
+    "EMAIL_ADDRESS":     "כתובת אימייל",
+    "PHONE_NUMBER":      "מספר טלפון",
+    "CREDIT_CARD":       "כרטיס אשראי",
+    "IBAN_CODE":         "מספר IBAN (חשבון בנק)",
+    "CRYPTO":            "ארנק קריפטו",
+    "LOCATION":          "מיקום / כתובת",
+    "DATE_TIME":         "תאריך / שעה",
+    "NRP":               "לאום / דת / גזע",
+    "MEDICAL_LICENSE":   "רישיון רפואי",
+    "URL":               "כתובת אתר",
+    "IP_ADDRESS":        "כתובת IP",
+    "AGE":               "גיל",
+    # אמריקאי
+    "US_SSN":            "מזהה אמריקאי (SSN)",
+    "US_PASSPORT":       "דרכון אמריקאי",
+    "US_DRIVER_LICENSE": "רישיון נהיגה אמריקאי",
+    "US_BANK_NUMBER":    "מספר חשבון בנק (US)",
+    "US_ITIN":           "מזהה מס אמריקאי",
+}
 
+def translate_entity(entity_type: str) -> str:
+    """מתרגם שם ישות מאנגלית לעברית"""
+    return ENTITY_HEBREW.get(entity_type, entity_type)
 
-# יצירת המזהים
-@st.cache_resource
-def load_processors():
-    detector = BasicPIIDetector()
-    image_processor = ImageProcessor()
-    pdf_processor = PDFProcessor()
-    
-    ai_pipeline = None
+# ─── cache: load engines once ────────────────────────────────────
+@st.cache_resource(show_spinner="⏳ טוען מנועי AI... (רק בפעם הראשונה)")
+def load_all_engines():
+    detector       = BasicPIIDetector()
+    image_proc     = ImageProcessor()
+    pdf_proc       = PDFProcessor()
+    ai_pipeline    = None
+    ai_error       = None
     if AI_PIPELINE_AVAILABLE:
         try:
             ai_pipeline = PIIPipeline()
         except Exception as e:
-            st.error(f"שגיאה בטעינת צינור AI: {e}")
-            
-    return detector, image_processor, pdf_processor, ai_pipeline
+            ai_error = str(e)
+    return detector, image_proc, pdf_proc, ai_pipeline, ai_error
 
+detector, image_processor, pdf_processor, ai_pipeline, _ai_error = load_all_engines()
 
-detector, image_processor, pdf_processor, ai_pipeline = load_processors()
+# ═══════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ═══════════════════════════════════════════════════════════════════
+with st.sidebar:
+    st.title("🔒 PII Detection")
+    st.caption("פרויקט גמר 2024")
+    st.divider()
 
-# תפריט
-tab1, tab2, tab3, tab4 = st.tabs(["📝 טקסט", "🖼️ תמונה", "📄 PDF", "🤖 AI Pipeline (Presidio)"])
-
-# טאב טקסט
-with tab1:
-    st.header("📝 ניתוח טקסט")
-
-    text_input = st.text_area(
-        "הזן טקסט לבדיקה:",
-        height=150,
-        placeholder="הקלד או הדבק טקסט כאן..."
+    st.subheader("⚙️ מנוע זיהוי")
+    engine_mode = st.radio(
+        "בחר מצב:",
+        ["💻 מחשב רגיל (מהיר, Regex)", "🚀 מחשב חדש (AI מתקדם)"],
+        index=0,
     )
+    USE_AI = "חדש" in engine_mode
 
-    if st.button("🔍 נתח טקסט"):
-        if text_input.strip():
-            with st.spinner("מנתח..."):
-                results = detector.analyze_text(text_input)
+    st.divider()
+    st.subheader("📊 סטטוס")
 
-            if results['matches']:
-                st.error(f"⚠️ {results['summary']}")
+    st.success("✅ מנוע Regex") if True else None
 
-                # הצגת ממצאים
-                matches_data = []
-                for i, match in enumerate(results['matches'], 1):
-                    matches_data.append({
-                        '#': i,
-                        'מידע רגיש': match.text,
-                        'סוג': match.category,
-                        'רגישות': match.sensitivity.name
-                    })
-
-                df = pd.DataFrame(matches_data)
-                st.dataframe(df, use_container_width=True)
-            else:
-                st.success("✅ לא נמצא מידע רגיש")
-
-# טאב תמונה
-with tab2:
-    st.header("🖼️ ניתוח תמונה (OCR)")
-
-    uploaded_image = st.file_uploader(
-        "העלה תמונה:",
-        type=['jpg', 'jpeg', 'png', 'bmp'],
-        help="תמונה עם טקסט"
-    )
-
-    if uploaded_image:
-        st.image(uploaded_image, width=400)
-
-        if st.button("🔍 נתח תמונה"):
-            with st.spinner("מבצע OCR..."):
-                image_bytes = uploaded_image.read()
-                ocr_result = image_processor.extract_text_from_image(image_bytes, uploaded_image.name)
-
-            if ocr_result['success']:
-                st.success(f"✅ OCR הושלם! ודאות: {ocr_result['confidence']:.1f}%")
-
-                extracted_text = ocr_result['text']
-
-                if extracted_text.strip():
-                    with st.expander("📝 טקסט שחולץ"):
-                        st.text(extracted_text)
-
-                    # ניתוח PII
-                    pii_results = detector.analyze_text(extracted_text)
-
-                    if pii_results['matches']:
-                        st.error(f"⚠️ {pii_results['summary']}")
-
-                        for match in pii_results['matches']:
-                            st.write(f"🔍 **{match.text}** ({match.category})")
-                    else:
-                        st.success("✅ לא נמצא מידע רגיש בתמונה")
-                else:
-                    st.warning("⚠️ לא נמצא טקסט בתמונה")
-            else:
-                st.error(f"❌ שגיאה ב-OCR: {ocr_result.get('error', 'לא ידוע')}")
-
-# טאב PDF
-with tab3:
-    st.header("📄 ניתוח PDF")
-
-    uploaded_pdf = st.file_uploader(
-        "העלה PDF:",
-        type=['pdf'],
-        help="קובץ PDF לניתוח"
-    )
-
-    if uploaded_pdf:
-        pdf_bytes = uploaded_pdf.read()
-
-        if st.button("🔍 נתח PDF"):
-            with st.spinner("מעבד PDF..."):
-                pdf_result = pdf_processor.extract_text_from_pdf(pdf_bytes, uploaded_pdf.name)
-
-            if pdf_result['success']:
-                st.success(f"✅ PDF עובד! {pdf_result['pages']} עמודים")
-                
-                # הצגת סוג המסמך שזוהה
-                if 'pdf_type_desc' in pdf_result:
-                    st.info(f"💡 **זיהוי סוג מסמך:** {pdf_result['pdf_type_desc']}")
-
-                extracted_text = pdf_result['text']
-
-                if extracted_text.strip():
-                    with st.expander("📝 תוכן ה-PDF"):
-                        preview = extracted_text[:1000] + "..." if len(extracted_text) > 1000 else extracted_text
-                        st.text(preview)
-
-                    # ניתוח PII
-                    pii_results = detector.analyze_text(extracted_text)
-
-                    if pii_results['matches']:
-                        st.error(f"⚠️ {pii_results['summary']}")
-
-                        for match in pii_results['matches']:
-                            st.write(f"🔍 **{match.text}** ({match.category})")
-                    else:
-                        st.success("✅ לא נמצא מידע רגיש ב-PDF")
-                else:
-                    st.warning("⚠️ לא נמצא טקסט ב-PDF")
-            else:
-                st.error(f"❌ שגיאה בעיבוד PDF: {pdf_result.get('error', 'לא ידוע')}")
-
-# טאב AI Pipeline
-with tab4:
-    st.header("🤖 מערכת זיהוי חכמה מבוססת Presidio")
-    st.write("מערכת מתקדמת מבוססת Microsoft Presidio ומנוע למידת מכונה מקומי (NLP/OCR) שמנתחת כל סוג קובץ ומצנזרת אוטומטית מידע רגיש.")
-    
-    if not AI_PIPELINE_AVAILABLE:
-        st.error("❌ הצינור החכם לא מותקן כראוי. אנא ודא שהרצת `pip install -r requirements.txt`.")
+    if TESSERACT_OK:
+        try:
+            st.success(f"✅ Tesseract {pytesseract.get_tesseract_version()}")
+        except Exception:
+            st.warning("⚠️ Tesseract - שגיאה")
     else:
-        st.info("העלה כל קובץ (PDF, DOCX, XLSX, תמונה) והמערכת תנתח אותו באופן מלא.")
-        uploaded_ai_file = st.file_uploader(
-            "העלה קובץ לניתוח חכם:",
-            type=['pdf', 'docx', 'xlsx', 'jpg', 'jpeg', 'png'],
-            help="קובץ לניתוח AI"
-        )
-        
-        if uploaded_ai_file:
-            if st.button("🔍 הפעל Pipeline חכם"):
-                with st.spinner("מנתח מסמך בעזרת מודלי AI מקומיים..."):
-                    file_bytes = uploaded_ai_file.read()
-                    
-                    # קריאה לצינור שלנו
-                    ai_report = ai_pipeline.process_file(file_bytes=file_bytes, filename=uploaded_ai_file.name)
-                    
-                if not ai_report["success"]:
-                    st.error(f"❌ שגיאה: {ai_report.get('error')}")
+        st.error("❌ Tesseract לא מותקן")
+
+    if AI_PIPELINE_AVAILABLE and ai_pipeline:
+        st.success("✅ Presidio AI")
+    elif AI_PIPELINE_AVAILABLE:
+        st.warning("⚠️ AI - כשל בטעינה")
+        if st.button("🔄 טען מחדש"):
+            st.cache_resource.clear()
+            st.rerun()
+    else:
+        st.error("❌ Presidio לא מותקן")
+
+    if REDACTORS_AVAILABLE:
+        st.success("✅ מנוע השחרה")
+    else:
+        st.error("❌ מנוע השחרה חסר")
+
+    st.divider()
+    st.caption("🔒 כל הניתוחים מקומיים בלבד — ללא שידור לרשת")
+
+# ═══════════════════════════════════════════════════════════════════
+# HEADER
+# ═══════════════════════════════════════════════════════════════════
+st.title("🔒 מערכת זיהוי מידע אישי רגיש")
+st.write("העלה קובץ, ראה **תצוגה מקדימה** של הממצאים, ואז בחר מה להשחיר.")
+
+if USE_AI and not ai_pipeline:
+    st.warning("⚠️ מנוע AI לא זמין — עובד במצב Regex.")
+    USE_AI = False
+
+st.divider()
+
+# ═══════════════════════════════════════════════════════════════════
+# HELPERS
+# ═══════════════════════════════════════════════════════════════════
+
+def sensitivity_icon(name: str) -> str:
+    return {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(name, "⚪")
+
+
+def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, original_text: str = ""):
+    """
+    הצג טבלת תצוגה מקדימה של ממצאי PII עם checkbox לכל שורה.
+    לאחר בחירה — לחצן השחרה שמוריד את הקובץ המושחר.
+    """
+    if not entities:
+        st.success("✅ לא נמצא מידע רגיש — המסמך נקי!")
+        return
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    # ─── כותרת ─────────────────────────────────────────────────────
+    st.subheader(f"🔍 נמצאו {len(entities)} ממצאים — בחר מה להשחיר")
+    st.caption("סמן ✅ את הממצאים שברצונך להשחיר בקובץ הסופי, ואז לחץ 'בצע השחרה'.")
+
+    # ─── טבלת בחירה ────────────────────────────────────────────────
+    # כל ממצא מקבל checkbox מובנה דרך st.data_editor
+    df = pd.DataFrame([{
+        "השחר?":    True,
+        "#":         i + 1,
+        "טקסט":      e.get("text", ""),
+        "סוג":       translate_entity(e.get("entity_type", e.get("category", ""))),
+        "ודאות":     f"{e.get('score', e.get('confidence', 0)):.0%}",
+        "רגישות":    e.get("sensitivity", ""),
+    } for i, e in enumerate(entities)])
+
+    edited_df = st.data_editor(
+        df,
+        column_config={
+            "השחר?": st.column_config.CheckboxColumn("השחר?", default=True),
+            "#":      st.column_config.NumberColumn("#", width="small"),
+        },
+        use_container_width=True,
+        hide_index=True,
+        key=f"preview_{filename}"
+    )
+
+    # ─── סיכום בחירה ───────────────────────────────────────────────
+    selected_texts = edited_df[edited_df["השחר?"] == True]["טקסט"].tolist()
+    total_selected = len(selected_texts)
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("סה״כ ממצאים", len(entities))
+    col2.metric("נבחרו להשחרה", total_selected)
+    col3.metric("יישארו גלויים", len(entities) - total_selected)
+
+    if total_selected == 0:
+        st.info("לא נבחרו ממצאים להשחרה.")
+        return
+
+    # ─── כפתור השחרה ───────────────────────────────────────────────
+    if not REDACTORS_AVAILABLE:
+        st.error("❌ מנוע השחרה לא זמין — לא ניתן להפיק קובץ מושחר.")
+        return
+
+    if st.button(f"🖊️ בצע השחרה ({total_selected} פריטים)", type="primary", key=f"do_redact_{filename}"):
+        with st.spinner("מבצע השחרה על הקובץ..."):
+            redacted_bytes = None
+            mime = "application/octet-stream"
+            out_name = f"redacted_{filename}"
+
+            try:
+                if ext == "pdf":
+                    redactor = PdfRedactor()
+                    redacted_bytes = redactor.redact_pdf(file_bytes, selected_texts)
+                    mime = "application/pdf"
+
+                elif ext == "docx":
+                    redactor = WordRedactor()
+                    redacted_bytes = redactor.redact_word(file_bytes, selected_texts)
+                    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+                elif ext == "xlsx":
+                    redactor = ExcelRedactor()
+                    redacted_bytes = redactor.redact_excel(file_bytes, selected_texts)
+                    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+                elif ext in ("jpg", "jpeg", "png", "bmp"):
+                    redactor = ImageRedactor()
+                    redacted_bytes = redactor.redact_image(file_bytes, selected_texts)
+                    mime = "image/png"
+                    out_name = f"redacted_{os.path.splitext(filename)[0]}.png"
+
                 else:
-                    st.success(f"✅ עיבוד הושלם! (סוג קובץ: {ai_report['file_type']})")
-                    
-                    eval_data = ai_report["risk_evaluation"]
-                    
-                    # הצגת רמת סיכון
-                    risk_level = eval_data["risk_level"]
-                    if risk_level == "SAFE":
-                        st.success(f"🛡️ רמת סיכון: {risk_level} - {eval_data['summary']}")
-                    elif risk_level == "WARNING":
-                        st.warning(f"⚠️ רמת סיכון: {risk_level} - {eval_data['summary']}")
-                    else:
-                        st.error(f"🚨 רמת סיכון: {risk_level} - {eval_data['summary']}")
-                        
-                    # הצגת טקסט מצונזר
-                    with st.expander("📝 טקסט מצונזר (Anonymized)", expanded=True):
-                        st.text(ai_report.get("anonymized_text", ""))
-                        
-                    # הצגת טבלה של ממצאים
-                    if ai_report["entities"]:
-                        st.subheader("🔍 ישויות רגישות שנמצאו:")
-                        entities_data = []
-                        for i, ent in enumerate(ai_report["entities"], 1):
-                            entities_data.append({
-                                '#': i,
-                                'מידע': ent['text'],
-                                'סוג (Presidio)': ent['entity_type'],
-                                'ודאות': f"{ent['score']:.0%}",
-                                'מיקום': f"{ent['start']}-{ent['end']}"
-                            })
-                        
-                        df_ai = pd.DataFrame(entities_data)
-                        st.dataframe(df_ai, use_container_width=True)
-                        
-                        # כפתור להורדת JSON של הדוח המלא
-                        json_str = ai_pipeline.generate_report_json(ai_report)
-                        st.download_button(
-                            label="📄 הורד דוח JSON",
-                            data=json_str,
-                            file_name=f"ai_pii_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                            mime="application/json"
-                        )
+                    st.error(f"❌ פורמט לא נתמך להשחרה: {ext}")
 
-# מידע צד
-st.sidebar.header("📚 אודות")
-st.sidebar.info("""
-**מערכת זיהוי מידע רגיש**
+            except Exception as ex:
+                st.error(f"❌ שגיאה בהשחרה: {ex}")
 
-**יכולות:**
-• זיהוי ת.ז, טלפונים, אימיילים
-• OCR לתמונות
-• עיבוד PDF
-• ניתוח מידע רפואי ופיננסי
-
-**פרויקט גמר 2024**
-""")
-
-st.sidebar.header("🔧 סטטוס מערכת")
-try:
-    version = pytesseract.get_tesseract_version()
-    st.sidebar.success(f"✅ Tesseract {version}")
-except:
-    st.sidebar.error("❌ Tesseract לא זמין")
-
-st.sidebar.success("✅ מערכת מוכנה")
-
-
-def add_enhanced_ui_features():
-    """הוספת תכונות UI מתקדמות"""
-
-    # 1. מחולל דוח PDF
-    def generate_report(results, source_type="text"):
-        """יצירת דוח מפורט"""
-        report_data = {
-            'timestamp': datetime.now().isoformat(),
-            'source_type': source_type,
-            'total_matches': results['total_matches'],
-            'overall_sensitivity': results['overall_sensitivity'].name,
-            'summary': results['summary'],
-            'matches': []
-        }
-
-        for match in results['matches']:
-            report_data['matches'].append({
-                'text': match.text,
-                'category': match.category,
-                'sensitivity': match.sensitivity.name,
-                'confidence': f"{match.confidence:.0%}",
-                'position': f"{match.start_pos}-{match.end_pos}"
-            })
-
-        return report_data
-
-    # 2. הצגת סטטיסטיקות מתקדמות
-    def display_advanced_stats(results):
-        """הצגת סטטיסטיקות מפורטות"""
-        if not results['matches']:
-            return
-
-        st.subheader("📈 ניתוח מתקדם")
-
-        # חלוקה לעמודות
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            critical_count = sum(1 for m in results['matches'] if m.sensitivity.name == 'CRITICAL')
-            st.metric("🔴 קריטי", critical_count)
-
-        with col2:
-            high_count = sum(1 for m in results['matches'] if m.sensitivity.name == 'HIGH')
-            st.metric("🟠 גבוה", high_count)
-
-        with col3:
-            validated_count = sum(1 for m in results['matches'] if m.confidence > 0.9)
-            st.metric("✅ מאומת", validated_count)
-
-        with col4:
-            avg_confidence = sum(m.confidence for m in results['matches']) / len(results['matches'])
-            st.metric("🎯 ודאות ממוצעת", f"{avg_confidence:.0%}")
-
-        # גרף התפלגות רגישות
-        sensitivity_data = {}
-        for match in results['matches']:
-            sens = match.sensitivity.name
-            sensitivity_data[sens] = sensitivity_data.get(sens, 0) + 1
-
-        if sensitivity_data:
-            st.subheader("📊 התפלגות רגישות")
-            df_chart = pd.DataFrame(list(sensitivity_data.items()), columns=['רמת רגישות', 'כמות'])
-            st.bar_chart(df_chart.set_index('רמת רגישות'))
-
-    # 3. המלצות אבטחה חכמות
-    def show_security_recommendations(results):
-        """הצגת המלצות אבטחה מותאמות"""
-        if not results['matches']:
-            st.success("🛡️ הטקסט בטוח לשיתוף")
-            return
-
-        st.subheader("🛡️ המלצות אבטחה")
-
-        critical_found = any(m.sensitivity.name == 'CRITICAL' for m in results['matches'])
-        high_found = any(m.sensitivity.name == 'HIGH' for m in results['matches'])
-
-        if critical_found:
-            st.error("""
-            🚨 **פעולות מיידיות נדרשות:**
-            - הסר מיידית מספרי ת.ז וכרטיסי אשראי
-            - אל תשתף טקסט זה בפלטפורמות ציבוריות
-            - שקול הצפנה לאחסון מקומי
-            - בדוק מי מוסמך לראות מידע זה
-            """)
-        elif high_found:
-            st.warning("""
-            ⚠️ **זהירות נדרשת:**
-            - בדוק אם באמת צריך לשתף מידע אישי זה
-            - שקול החלפת מספרי טלפון בXXX-XXXXXXX
-            - הסתר חלק מכתובת האימייל
-            - ודא שהמקבל מוסמך לקבל מידע זה
-            """)
-        else:
-            st.info("""
-            ℹ️ **שמירה על פרטיות:**
-            - המידע ברמת רגישות נמוכה-בינונית
-            - עדיין מומלץ לבדוק את הנמענים
-            - שקול הסרת מידע אישי לא רלוונטי
-            """)
-
-        # המלצות ספציפיות לכל סוג מידע
-        categories_found = set(m.category for m in results['matches'])
-
-        if 'israeli_id' in categories_found:
-            st.error("🆔 **ת.ז נמצאה:** החלף במספר דמה או הסר לחלוטין")
-
-        if 'phone_number' in categories_found:
-            st.warning("📞 **מספר טלפון:** החלף ב-05X-XXXXXXX או 'לפרטים צור קשר'")
-
-        if 'email' in categories_found:
-            st.warning("📧 **אימייל:** החלף ב-username@[DOMAIN] או הסר")
-
-        if 'credit_card' in categories_found:
-            st.error("💳 **כרטיס אשראי:** הסר מיידית או החלף ב-XXXX-XXXX-XXXX-XXXX")
-
-    # 4. ייצוא תוצאות
-    def export_results(results, source_type="text"):
-        """ייצוא תוצאות בפורמטים שונים"""
-        st.subheader("📤 ייצוא תוצאות")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            # ייצוא JSON
-            report_data = generate_report(results, source_type)
-            json_str = json.dumps(report_data, ensure_ascii=False, indent=2)
+        if redacted_bytes:
+            st.success(f"✅ השחרה הושלמה! {total_selected} פריטים הוסרו.")
             st.download_button(
-                label="📄 הורד דוח JSON",
-                data=json_str,
-                file_name=f"pii_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json"
+                label=f"⬇️ הורד קובץ מושחר ({out_name})",
+                data=redacted_bytes,
+                file_name=out_name,
+                mime=mime,
+                type="primary"
             )
+        elif redacted_bytes is None and ext in ("pdf", "docx", "xlsx", "jpg", "jpeg", "png", "bmp"):
+            st.warning("⚠️ לא בוצעו השחרות — ייתכן שהטקסטים לא נמצאו בקובץ.")
 
-        with col2:
-            # ייצוא CSV
-            if results['matches']:
-                matches_df = pd.DataFrame([
-                    {
-                        'מידע רגיש': m.text,
-                        'קטגוריה': m.category,
-                        'רגישות': m.sensitivity.name,
-                        'ודאות': f"{m.confidence:.0%}",
-                        'מיקום': f"{m.start_pos}-{m.end_pos}"
-                    }
-                    for m in results['matches']
-                ])
 
-                csv = matches_df.to_csv(index=False, encoding='utf-8-sig')
-                st.download_button(
-                    label="📊 הורד טבלה CSV",
-                    data=csv,
-                    file_name=f"pii_matches_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
+def ai_entities_to_preview(entities_from_report: list) -> list:
+    """ממיר את הפורמט של AI Pipeline לפורמט אחיד לתצוגה מקדימה"""
+    return [{"text": e["text"], "entity_type": e["entity_type"],
+             "score": e["score"], "sensitivity": ""} for e in entities_from_report]
+
+
+def basic_matches_to_preview(matches, min_confidence: float = 0.4) -> list:
+    """ממיר תוצאות BasicPIIDetector לפורמט אחיד עם סינון ביטחון"""
+    return [{"text": m.text, "entity_type": m.category,
+             "score": m.confidence, "sensitivity": m.sensitivity.name}
+            for m in matches if m.confidence >= min_confidence]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TABS
+# ═══════════════════════════════════════════════════════════════════
+tab_img, tab_word, tab_excel, tab_pdf, tab_ai = st.tabs([
+    "🖼️  תמונה",
+    "📝  Word",
+    "📊  Excel",
+    "📄  PDF",
+    "🤖  AI Pipeline"
+])
+
+# ────────────────────────────────────────────────────────────────────
+# TAB 1 — תמונה
+# ────────────────────────────────────────────────────────────────────
+with tab_img:
+    st.header("🖼️ ניתוח תמונה")
+    st.caption("JPG, PNG, BMP — חילוץ טקסט OCR + זיהוי PII + תצוגה מקדימה + השחרה")
+
+    if not TESSERACT_OK:
+        st.warning("⚠️ Tesseract לא מותקן. הורד מ: https://github.com/UB-Mannheim/tesseract/wiki")
+    else:
+        uploaded = st.file_uploader("📂 בחר קובץ תמונה", type=["jpg", "jpeg", "png", "bmp"], key="img_up")
+        if uploaded:
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.image(uploaded, caption=uploaded.name, use_container_width=True)
+            with col2:
+                if st.button("🔍 נתח תמונה", key="btn_img", type="primary"):
+                    with st.spinner("OCR + PII..."):
+                        raw = uploaded.getvalue()
+                        ocr = image_processor.extract_text_from_image(raw, uploaded.name)
+                    if ocr["success"] and ocr["text"].strip():
+                        st.info(f"📖 ודאות OCR: {ocr.get('confidence', 0):.1f}%")
+                        with st.expander("📝 טקסט שחולץ"):
+                            st.text(ocr["text"])
+                        if USE_AI and ai_pipeline:
+                            rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
+                            if rep["success"]:
+                                entities = ai_entities_to_preview(rep["entities"])
+                        else:
+                            res = detector.analyze_text(ocr["text"])
+                            entities = basic_matches_to_preview(res["matches"])
+                        st.session_state["img_entities"] = entities
+                        st.session_state["img_bytes"]    = raw
+                        st.session_state["img_name"]     = uploaded.name
+                    elif not ocr.get("text", "").strip():
+                        st.warning("⚠️ לא נמצא טקסט בתמונה")
+                    else:
+                        st.error(f"❌ שגיאה: {ocr.get('error')}")
+
+            # תצוגה מקדימה + השחרה
+            if "img_entities" in st.session_state and st.session_state.get("img_name") == uploaded.name:
+                st.divider()
+                show_preview_and_redact(
+                    st.session_state["img_entities"],
+                    st.session_state["img_bytes"],
+                    st.session_state["img_name"]
                 )
 
-        with col3:
-            # ייצוא סיכום טקסט
-            summary_text = f"""דוח זיהוי מידע רגיש
-תאריך: {datetime.now().strftime('%d/%m/%Y %H:%M')}
-סוג מקור: {source_type}
+# ────────────────────────────────────────────────────────────────────
+# TAB 2 — Word
+# ────────────────────────────────────────────────────────────────────
+with tab_word:
+    st.header("📝 ניתוח מסמך Word")
+    st.caption("DOCX — מחלץ טקסט כולל טבלאות + זיהוי PII + תצוגה מקדימה + השחרה")
 
-סיכום: {results['summary']}
-רמת רגישות כללית: {results['overall_sensitivity'].name}
-סה"כ ממצאים: {results['total_matches']}
+    uploaded = st.file_uploader("📂 בחר קובץ Word", type=["docx"], key="word_up")
+    if uploaded:
+        st.info(f"📄 **{uploaded.name}** | {uploaded.size / 1024:.1f} KB")
+        if st.button("🔍 נתח Word", key="btn_word", type="primary"):
+            with st.spinner("מחלץ וניתוח..."):
+                raw = uploaded.getvalue()
+                if USE_AI and ai_pipeline:
+                    rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
+                    if rep["success"]:
+                        entities = ai_entities_to_preview(rep["entities"])
+                        text = rep.get("anonymized_text", "")
+                    else:
+                        st.error(f"❌ {rep.get('error')}")
+                        entities = []
+                        text = ""
+                else:
+                    import docx as _docx
+                    doc = _docx.Document(io.BytesIO(raw))
+                    text = "\n".join(p.text for p in doc.paragraphs)
+                    res = detector.analyze_text(text)
+                    entities = basic_matches_to_preview(res["matches"])
 
-פירוט ממצאים:
-"""
-            for i, match in enumerate(results['matches'], 1):
-                summary_text += f"{i}. {match.text} ({match.category}) - {match.sensitivity.name}\n"
+            if text:
+                with st.expander("📝 תוכן המסמך"):
+                    st.text(text[:2000] + ("..." if len(text) > 2000 else ""))
+            st.session_state["word_entities"] = entities
+            st.session_state["word_bytes"]    = raw
+            st.session_state["word_name"]     = uploaded.name
 
-            st.download_button(
-                label="📝 הורד סיכום טקסט",
-                data=summary_text,
-                file_name=f"pii_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain"
+        if "word_entities" in st.session_state and st.session_state.get("word_name") == uploaded.name:
+            st.divider()
+            show_preview_and_redact(
+                st.session_state["word_entities"],
+                st.session_state["word_bytes"],
+                st.session_state["word_name"]
             )
 
-    # 5. היסטוריית בדיקות
-    def show_scan_history():
-        """הצגת היסטוריית בדיקות (בזיכרון הסשן)"""
-        if 'scan_history' not in st.session_state:
-            st.session_state.scan_history = []
+# ────────────────────────────────────────────────────────────────────
+# TAB 3 — Excel
+# ────────────────────────────────────────────────────────────────────
+with tab_excel:
+    st.header("📊 ניתוח קובץ Excel")
+    st.caption("XLSX — סריקת כל הגיליונות + זיהוי PII + תצוגה מקדימה + השחרה")
 
-        if st.session_state.scan_history:
-            st.subheader("📋 היסטוריית בדיקות")
+    uploaded = st.file_uploader("📂 בחר קובץ Excel", type=["xlsx"], key="excel_up")
+    if uploaded:
+        st.info(f"📊 **{uploaded.name}** | {uploaded.size / 1024:.1f} KB")
+        if st.button("🔍 נתח Excel", key="btn_excel", type="primary"):
+            with st.spinner("קורא גיליונות..."):
+                raw = uploaded.getvalue()
+                if USE_AI and ai_pipeline:
+                    rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
+                    if rep["success"]:
+                        entities = ai_entities_to_preview(rep["entities"])
+                        text = rep.get("anonymized_text", "")
+                    else:
+                        st.error(f"❌ {rep.get('error')}")
+                        entities = []
+                        text = ""
+                else:
+                    import openpyxl as _xl
+                    wb = _xl.load_workbook(io.BytesIO(raw), data_only=True)
+                    lines = []
+                    for ws in wb.worksheets:
+                        for row in ws.iter_rows(values_only=True):
+                            t = " ".join(str(c) for c in row if c is not None)
+                            if t.strip():
+                                lines.append(t)
+                    text = "\n".join(lines)
+                    res = detector.analyze_text(text)
+                    entities = basic_matches_to_preview(res["matches"])
 
-            for i, scan in enumerate(reversed(st.session_state.scan_history[-5:]), 1):
-                with st.expander(f"בדיקה {i} - {scan['timestamp'][:19].replace('T', ' ')}"):
-                    st.write(f"**סוג:** {scan['source_type']}")
-                    st.write(f"**תוצאה:** {scan['summary']}")
-                    st.write(f"**ממצאים:** {scan['total_matches']}")
+            if text:
+                with st.expander("📝 תוכן הקובץ"):
+                    st.text(text[:2000] + ("..." if len(text) > 2000 else ""))
+            st.session_state["excel_entities"] = entities
+            st.session_state["excel_bytes"]    = raw
+            st.session_state["excel_name"]     = uploaded.name
 
-    # החזרת הפונקציות לשימוש
-    return {
-        'display_advanced_stats': display_advanced_stats,
-        'show_security_recommendations': show_security_recommendations,
-        'export_results': export_results,
-        'show_scan_history': show_scan_history,
-        'generate_report': generate_report
-    }
+        if "excel_entities" in st.session_state and st.session_state.get("excel_name") == uploaded.name:
+            st.divider()
+            show_preview_and_redact(
+                st.session_state["excel_entities"],
+                st.session_state["excel_bytes"],
+                st.session_state["excel_name"]
+            )
+
+# ────────────────────────────────────────────────────────────────────
+# TAB 4 — PDF
+# ────────────────────────────────────────────────────────────────────
+with tab_pdf:
+    st.header("📄 ניתוח קובץ PDF")
+    st.caption("PDF רגיל וסרוק + זיהוי PII + תצוגה מקדימה + השחרה")
+
+    uploaded = st.file_uploader("📂 בחר קובץ PDF", type=["pdf"], key="pdf_up")
+    if uploaded:
+        st.info(f"📄 **{uploaded.name}** | {uploaded.size / 1024:.1f} KB")
+        if st.button("🔍 נתח PDF", key="btn_pdf", type="primary"):
+            with st.spinner("מעבד PDF..."):
+                raw = uploaded.getvalue()
+                if USE_AI and ai_pipeline:
+                    rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
+                    if rep["success"]:
+                        entities = ai_entities_to_preview(rep["entities"])
+                        text = rep.get("anonymized_text", "")
+                    else:
+                        st.error(f"❌ {rep.get('error')}")
+                        entities = []
+                        text = ""
+                else:
+                    pdf_result = pdf_processor.extract_text_from_pdf(raw, uploaded.name)
+                    if pdf_result["success"]:
+                        text = pdf_result["text"]
+                        pages = pdf_result.get("pages", "?")
+                        is_scanned = pdf_result.get("is_scanned", False)
+                        st.success(f"✅ {pages} עמודים" + (" | OCR" if is_scanned else ""))
+                        res = detector.analyze_text(text)
+                        entities = basic_matches_to_preview(res["matches"])
+                    else:
+                        st.error(f"❌ {pdf_result.get('error')}")
+                        entities = []
+                        text = ""
+
+            if text:
+                with st.expander("📝 תוכן ה-PDF"):
+                    st.text(text[:2000] + ("..." if len(text) > 2000 else ""))
+            st.session_state["pdf_entities"] = entities
+            st.session_state["pdf_bytes"]    = raw
+            st.session_state["pdf_name"]     = uploaded.name
+
+        if "pdf_entities" in st.session_state and st.session_state.get("pdf_name") == uploaded.name:
+            st.divider()
+            show_preview_and_redact(
+                st.session_state["pdf_entities"],
+                st.session_state["pdf_bytes"],
+                st.session_state["pdf_name"]
+            )
+
+# ────────────────────────────────────────────────────────────────────
+# TAB 5 — AI Pipeline (כל פורמט)
+# ────────────────────────────────────────────────────────────────────
+with tab_ai:
+    st.header("🤖 ניתוח AI מלא (Presidio)")
+    st.write("העלה **כל סוג קובץ** — AI מלא + תצוגה מקדימה + השחרה.")
+
+    if not AI_PIPELINE_AVAILABLE:
+        st.error("❌ Presidio לא מותקן.")
+    elif ai_pipeline is None:
+        st.error("❌ מנוע AI לא עלה.")
+        if _ai_error:
+            st.code(_ai_error)
+        if st.button("🔄 נסה שוב"):
+            st.cache_resource.clear()
+            st.rerun()
+    else:
+        st.success("✅ Presidio + spaCy en_core_web_lg פעיל")
+
+        uploaded = st.file_uploader(
+            "📂 בחר קובץ לניתוח AI",
+            type=["pdf", "docx", "xlsx", "jpg", "jpeg", "png", "bmp"],
+            key="ai_up"
+        )
+
+        if uploaded:
+            ext = uploaded.name.rsplit(".", 1)[-1].upper()
+            st.info(f"📁 **{uploaded.name}** | {ext} | {uploaded.size / 1024:.1f} KB")
+
+            if st.button("🚀 נתח עם AI", key="btn_ai", type="primary"):
+                with st.spinner("🤖 Presidio + spaCy מנתחים..."):
+                    raw = uploaded.getvalue()
+                    rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
+
+                if rep["success"]:
+                    # הצג סיכום סיכון
+                    ev = rep["risk_evaluation"]
+                    risk_level = ev["risk_level"]
+                    icons = {"SAFE": "🛡️", "WARNING": "⚠️", "UNSAFE": "🚨"}
+                    alerts = {"SAFE": st.success, "WARNING": st.warning, "UNSAFE": st.error}
+                    alerts.get(risk_level, st.info)(
+                        f"{icons.get(risk_level,'')} רמת סיכון: **{risk_level}** | {ev['summary']}"
+                    )
+
+                    with st.expander("📝 טקסט מצונזר"):
+                        st.text(rep.get("anonymized_text", ""))
+
+                    entities = ai_entities_to_preview(rep["entities"])
+                    st.session_state["ai_entities"] = entities
+                    st.session_state["ai_bytes"]    = raw
+                    st.session_state["ai_name"]     = uploaded.name
+                else:
+                    st.error(f"❌ {rep.get('error')}")
+
+            if "ai_entities" in st.session_state and st.session_state.get("ai_name") == uploaded.name:
+                st.divider()
+                show_preview_and_redact(
+                    st.session_state["ai_entities"],
+                    st.session_state["ai_bytes"],
+                    st.session_state["ai_name"]
+                )

@@ -31,27 +31,44 @@ class PIIPipeline:
         file_type = extraction_result.get("file_type", "unknown")
         
         # 2. Analyze Text for PII
-        # We need the raw Analyzer objects for the Anonymizer, so we call Presidio directly here too,
-        # or we can modify pii_detector to return both. Let's do that cleanly.
+        MIN_CONFIDENCE = 0.4  # סף ביטחון מינימלי - מתחת לזה לא נציג
+
         analyzer_results = self.detector.analyzer.analyze(text=original_text, entities=[], language="en")
-        
-        # Format entities for the report
-        extracted_entities = []
+
+        # Format entities
+        raw_entities = []
         for res in analyzer_results:
-            extracted_entities.append({
+            raw_entities.append({
                 "entity_type": res.entity_type,
                 "start": res.start,
                 "end": res.end,
                 "score": res.score,
                 "text": original_text[res.start:res.end]
             })
-        extracted_entities = sorted(extracted_entities, key=lambda x: x["start"])
+
+        # ── סינון ביטחון נמוך ────────────────────────────────────────
+        raw_entities = [e for e in raw_entities if e["score"] >= MIN_CONFIDENCE]
+
+        # ── dedup: אותו span → שמור רק הציון הגבוה ביותר ───────────
+        span_best: dict = {}
+        for e in raw_entities:
+            key = (e["start"], e["end"])
+            if key not in span_best or e["score"] > span_best[key]["score"]:
+                span_best[key] = e
+        extracted_entities = sorted(span_best.values(), key=lambda x: x["start"])
+
+        # שמור רק את ה-analyzer_results התואמים (לאנונימיזציה)
+        keep_spans = {(e["start"], e["end"]) for e in extracted_entities}
+        analyzer_results_filtered = [
+            r for r in analyzer_results
+            if (r.start, r.end) in keep_spans and r.score >= MIN_CONFIDENCE
+        ]
         
         # 3. Decision Engine
         evaluation = self.decision_engine.evaluate(extracted_entities)
         
-        # 4. Anonymize
-        anonymized_text = self.detector.anonymize(original_text, analyzer_results)
+        # 4. Anonymize (using only the filtered & deduped results)
+        anonymized_text = self.detector.anonymize(original_text, analyzer_results_filtered)
         
         # 5. Build Report
         report = {
