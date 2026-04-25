@@ -22,6 +22,9 @@ try:
     from processors.image_processor import ImageProcessor
     from processors.pdf_processor import PDFProcessor
     from processors.word_processor import WordProcessor
+    from processors.Excel_Processor import ExcelProcessor
+    from redactors.excel_redactor import ExcelRedactor
+    from redactors.word_redactor import WordRedactor
     detector_available = True
     logging.info("Modules loaded OK")
 except ImportError as e:
@@ -131,9 +134,11 @@ if not detector_available:
 # ── Processors ────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_processors():
-    return (BasicPIIDetector(), ImageProcessor(), PDFProcessor(), WordProcessor())
+    return (BasicPIIDetector(), ImageProcessor(), PDFProcessor(), WordProcessor(), ExcelProcessor())
 
-detector, image_proc, pdf_proc, word_proc = load_processors()
+detector, image_proc, pdf_proc, word_proc, excel_proc = load_processors()
+redactor_word = WordRedactor()
+redactor_excel = ExcelRedactor()
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 _ICONS = {'LOW': '🟢', 'MEDIUM': '🟡', 'HIGH': '🟠', 'CRITICAL': '🔴'}
@@ -224,7 +229,7 @@ with col_r:
     </div>
     """, unsafe_allow_html=True)
 
-    img_file = st.file_uploader("", type=['jpg','jpeg','png','bmp','tiff','tif'],
+    img_file = st.file_uploader("Upload Image", type=['jpg','jpeg','png','bmp','tiff','tif'],
                                 key="up_img", label_visibility="collapsed")
     if img_file:
         st.image(img_file, use_container_width=True)
@@ -246,7 +251,7 @@ st.markdown('<hr class="divider">', unsafe_allow_html=True)
 # ══════════════════════════════════════════════════════════════════════════
 # ROW 2 — PDF  |  WORD
 # ══════════════════════════════════════════════════════════════════════════
-col_p, col_w = st.columns(2, gap="large")
+col_p, col_w, col_e = st.columns(3, gap="large")
 
 # ────── PDF ───────────────────────────────────────────────────────────────
 with col_p:
@@ -260,7 +265,7 @@ with col_p:
     </div>
     """, unsafe_allow_html=True)
 
-    pdf_file = st.file_uploader("", type=['pdf'], key="up_pdf", label_visibility="collapsed")
+    pdf_file = st.file_uploader("Upload PDF", type=['pdf'], key="up_pdf", label_visibility="collapsed")
     if pdf_file:
         st.caption(f"📁 {pdf_file.name}  |  {len(pdf_file.getvalue()):,} bytes")
         if st.button("🔍 נתח PDF", key="btn_pdf"):
@@ -293,7 +298,7 @@ with col_w:
     </div>
     """, unsafe_allow_html=True)
 
-    word_file = st.file_uploader("", type=['docx'], key="up_word", label_visibility="collapsed")
+    word_file = st.file_uploader("Upload Word", type=['docx'], key="up_word", label_visibility="collapsed")
     if word_file:
         st.caption(f"📁 {word_file.name}  |  {len(word_file.getvalue()):,} bytes")
         if st.button("🔍 נתח Word", key="btn_word"):
@@ -309,7 +314,64 @@ with col_w:
                     with st.expander("📝 תצוגה מקדימה"):
                         st.code(res['text'][:800] + ("…" if len(res['text'])>800 else ""), language=None)
                     with st.spinner("מזהה מידע..."):
-                        show_results(detector.analyze_text(res['text']))
+                        pii_res = detector.analyze_text(res['text'])
+                        show_results(pii_res)
+                        
+                    if pii_res and pii_res.get('matches'):
+                        pii_texts = [m.text for m in pii_res['matches']]
+                        with st.spinner("מייצר קובץ מושחר..."):
+                            redacted_bytes = redactor_word.redact_word(word_file.getvalue(), pii_texts)
+                            if redacted_bytes:
+                                st.download_button(
+                                    label="📥 הורד קובץ Word מושחר",
+                                    data=redacted_bytes,
+                                    file_name=f"redacted_{word_file.name}",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                )
+                else:
+                    st.warning("לא נמצא טקסט במסמך")
+            else:
+                st.error(f"שגיאה: {res.get('error','לא ידוע')}")
+
+# ────── EXCEL ─────────────────────────────────────────────────────────────
+with col_e:
+    st.markdown("""
+    <div class="card">
+      <div class="card-accent acc-purple"></div>
+      <div class="card-head">
+        <span class="icon">📊</span>
+        <div><h3>קובץ Excel</h3><p>XLSX — גיליונות נתונים · טבלאות</p></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    excel_file = st.file_uploader("Upload Excel", type=['xlsx', 'xls'], key="up_excel", label_visibility="collapsed")
+    if excel_file:
+        st.caption(f"📁 {excel_file.name}  |  {len(excel_file.getvalue()):,} bytes")
+        if st.button("🔍 נתח Excel", key="btn_excel"):
+            with st.spinner("מעבד Excel..."):
+                res = excel_proc.extract_text_from_excel(excel_file.getvalue(), excel_file.name)
+            if res['success']:
+                parts = [f"{res['sheet_count']} גיליונות", f"{res['character_count']:,} תווים"]
+                st.caption("  |  ".join(parts))
+                if res['text'].strip():
+                    with st.expander("📝 תצוגה מקדימה"):
+                        st.code(res['text'][:800] + ("…" if len(res['text'])>800 else ""), language=None)
+                    with st.spinner("מזהה מידע..."):
+                        pii_res = detector.analyze_text(res['text'])
+                        show_results(pii_res)
+                        
+                    if pii_res and pii_res.get('matches'):
+                        pii_texts = [m.text for m in pii_res['matches']]
+                        with st.spinner("מייצר קובץ מושחר..."):
+                            redacted_bytes = redactor_excel.redact_excel(excel_file.getvalue(), pii_texts)
+                            if redacted_bytes:
+                                st.download_button(
+                                    label="📥 הורד קובץ Excel מושחר",
+                                    data=redacted_bytes,
+                                    file_name=f"redacted_{excel_file.name}",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                )
                 else:
                     st.warning("לא נמצא טקסט במסמך")
             else:

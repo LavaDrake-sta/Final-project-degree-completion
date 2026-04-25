@@ -4,5 +4,6 @@ Redactors Module - משחירים
 """
 
 from .excel_redactor import ExcelRedactor
+from .word_redactor import WordRedactor
 
-__all__ = ['ExcelRedactor']
+__all__ = ['ExcelRedactor', 'WordRedactor']
