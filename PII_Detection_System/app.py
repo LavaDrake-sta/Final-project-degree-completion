@@ -127,7 +127,7 @@ with st.sidebar:
     st.divider()
     st.subheader("📊 סטטוס")
 
-    st.success("✅ מנוע Regex") if True else None
+    st.success("✅ מנוע Regex")
 
     if TESSERACT_OK:
         try:
@@ -268,10 +268,11 @@ def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, or
             st.success(f"✅ השחרה הושלמה! {total_selected} פריטים הוסרו.")
             st.download_button(
                 label=f"⬇️ הורד קובץ מושחר ({out_name})",
+                #label=f"⬇️ הורד קובץ מושחר ({filename})",
                 data=redacted_bytes,
                 file_name=out_name,
                 mime=mime,
-                type="primary"
+                #type="primary"
             )
         elif redacted_bytes is None and ext in ("pdf", "docx", "xlsx", "jpg", "jpeg", "png", "bmp"):
             st.warning("⚠️ לא בוצעו השחרות — ייתכן שהטקסטים לא נמצאו בקובץ.")
@@ -444,55 +445,232 @@ with tab_excel:
             )
 
 # ────────────────────────────────────────────────────────────────────
+def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipeline_engine=None):
+    """
+    סורק PDF עמוד עמוד, מחלץ קואורדינטות של מידע רגיש,
+    ומייצר תמונות של העמודים עם סימוני השחרה ויזואליים (מלבן צהוב/אדום).
+    """
+    import fitz
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    findings = []
+    page_images = []
+    
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        text = page.get_text()
+        
+        page_findings = []
+        if use_ai and ai_pipeline_engine:
+            rep = ai_pipeline_engine.process_file(file_bytes=text.encode('utf-8', errors='ignore'), filename="dummy.txt")
+            if rep.get("success") and "entities" in rep:
+                for e in rep["entities"]:
+                    entity_text = e.get("text", "")
+                    if not entity_text.strip(): continue
+                    category = e.get("entity_type", "PII")
+                    score = e.get("score", 0)
+                    for area in page.search_for(entity_text):
+                        finding = {
+                            "page": page_num,
+                            "rect": [area.x0, area.y0, area.x1, area.y1],
+                            "text": entity_text,
+                            "type": category,
+                            "score": score,
+                            "sensitivity": "HIGH",
+                            "id": f"{page_num}_{area.x0}_{area.y0}"
+                        }
+                        page_findings.append(finding)
+        else:
+            res = detector_engine.analyze_text(text)
+            for match in res.get("matches", []):
+                if match.confidence >= 0.4:
+                    entity_text = match.text
+                    category = match.category
+                    for area in page.search_for(entity_text):
+                        finding = {
+                            "page": page_num,
+                            "rect": [area.x0, area.y0, area.x1, area.y1],
+                            "text": entity_text,
+                            "type": category,
+                            "score": match.confidence,
+                            "sensitivity": match.sensitivity.name if hasattr(match.sensitivity, 'name') else "",
+                            "id": f"{page_num}_{area.x0}_{area.y0}_{category}"
+                        }
+                        page_findings.append(finding)
+                        
+        # סינון כפילויות בעמוד הנוכחי 
+        unique_page_findings = []
+        seen = set()
+        for f in page_findings:
+            key = (round(f["rect"][0]), round(f["rect"][1]), f["text"])
+            if key not in seen:
+                seen.add(key)
+                unique_page_findings.append(f)
+                
+        findings.extend(unique_page_findings)
+        
+        # יצירת תמונה של העמוד עם המלבנים מסומנים
+        temp_doc = fitz.open(stream=file_bytes, filetype="pdf")
+        temp_page = temp_doc[page_num]
+        for f in unique_page_findings:
+            temp_page.draw_rect(fitz.Rect(*f["rect"]), color=(1, 0, 0), width=1.5, fill_opacity=0.3, fill=(1, 1, 0)) 
+            
+        pix = temp_page.get_pixmap(matrix=fitz.Matrix(1.1, 1.1))  # הקטנה ליחס כמעט טבעי כדי שיתאים למסך בלי להיחתך
+        page_images.append(pix.tobytes("png"))
+        temp_doc.close()
+        
+    doc.close()
+    
+    final_findings = []
+    seen_ids = set()
+    for f in findings:
+        if f["id"] not in seen_ids:
+            seen_ids.add(f["id"])
+            final_findings.append(f)
+            
+    return final_findings, page_images
+
+
+# ────────────────────────────────────────────────────────────────────
 # TAB 4 — PDF
 # ────────────────────────────────────────────────────────────────────
 with tab_pdf:
-    st.header("📄 ניתוח קובץ PDF")
-    st.caption("PDF רגיל וסרוק + זיהוי PII + תצוגה מקדימה + השחרה")
+    st.header("📄 ניתוח קובץ PDF (תצוגה ויזואלית חכמה)")
+    st.caption("PDF רגיל וסרוק + זיהוי PII + תצוגה מקדימה אמיתית של העמודים והשחרה לפי קואורדינטות")
 
     uploaded = st.file_uploader("📂 בחר קובץ PDF", type=["pdf"], key="pdf_up")
     if uploaded:
         st.info(f"📄 **{uploaded.name}** | {uploaded.size / 1024:.1f} KB")
-        if st.button("🔍 נתח PDF", key="btn_pdf", type="primary"):
-            with st.spinner("מעבד PDF..."):
+        if st.button("🔍 נתח PDF (מצב ויזואלי)", key="btn_pdf", type="primary"):
+            with st.spinner("סורק מסמך, מאתר קואורדינטות ומרנדר עמודים..."):
                 raw = uploaded.getvalue()
-                if USE_AI and ai_pipeline:
-                    rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
-                    if rep["success"]:
-                        entities = ai_entities_to_preview(rep["entities"])
-                        text = rep.get("anonymized_text", "")
-                    else:
-                        st.error(f"❌ {rep.get('error')}")
-                        entities = []
-                        text = ""
+                findings, images = process_pdf_visual(raw, detector, USE_AI, ai_pipeline)
+                
+                if findings:
+                    st.success(f"✅ נמצאו {len(findings)} ממצאים רגישים!")
                 else:
-                    pdf_result = pdf_processor.extract_text_from_pdf(raw, uploaded.name)
-                    if pdf_result["success"]:
-                        text = pdf_result["text"]
-                        pages = pdf_result.get("pages", "?")
-                        is_scanned = pdf_result.get("is_scanned", False)
-                        st.success(f"✅ {pages} עמודים" + (" | OCR" if is_scanned else ""))
-                        res = detector.analyze_text(text)
-                        entities = basic_matches_to_preview(res["matches"])
-                    else:
-                        st.error(f"❌ {pdf_result.get('error')}")
-                        entities = []
-                        text = ""
+                    st.success("✅ המסמך נקי ממידע רגיש.")
+                    
+                st.session_state["pdf_visual_findings"] = findings
+                st.session_state["pdf_visual_images"] = images
+                st.session_state["pdf_bytes"]    = raw
+                st.session_state["pdf_name"]     = uploaded.name
 
-            if text:
-                with st.expander("📝 תוכן ה-PDF"):
-                    st.text(text[:2000] + ("..." if len(text) > 2000 else ""))
-            st.session_state["pdf_entities"] = entities
-            st.session_state["pdf_bytes"]    = raw
-            st.session_state["pdf_name"]     = uploaded.name
-
-        if "pdf_entities" in st.session_state and st.session_state.get("pdf_name") == uploaded.name:
+        if "pdf_visual_findings" in st.session_state and st.session_state.get("pdf_name") == uploaded.name:
             st.divider()
-            show_preview_and_redact(
-                st.session_state["pdf_entities"],
-                st.session_state["pdf_bytes"],
-                st.session_state["pdf_name"]
-            )
+            
+            findings = st.session_state["pdf_visual_findings"]
+            images = st.session_state["pdf_visual_images"]
+            
+            st.subheader("👀 תצוגה מקדימה ובחירת השחרה")
+            st.write("סמן בטבלה אילו אזורים להשחיר, או שרטט בעכבר מלבנים ישירות על המסמך (כמו בצייר).")
+            
+            col1, col2 = st.columns([1, 1.2])
+            
+            with col1:
+                st.markdown("**רשימת ממצאים אוטומטיים:**")
+                if findings:
+                    df = pd.DataFrame([{
+                        "השחר?": True,
+                        "עמוד": f.get("page", 0) + 1,
+                        "טקסט": f.get("text", ""),
+                        "סוג": translate_entity(f.get("type", "")),
+                    } for f in findings])
+                    
+                    edited_df = st.data_editor(
+                        df,
+                        column_config={"השחר?": st.column_config.CheckboxColumn("השחר?", default=True)},
+                        use_container_width=True,
+                        hide_index=True,
+                        key=f"pdf_preview_{uploaded.name}"
+                    )
+                    selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()
+                else:
+                    st.info("לא זוהו אוטומטית ממצאים להשחרה.")
+                    selected_indices = []
+
+            with col2:
+                st.markdown("**תצוגת המסמך (צייר מלבנים להשחרה):**")
+                st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
+                from streamlit_drawable_canvas import st_canvas
+                from PIL import Image
+                import io
+                
+                canvas_results = []
+                for page_num, img_bytes in enumerate(images):
+                    st.write(f"**עמוד {page_num + 1}**")
+                    bg_image = Image.open(io.BytesIO(img_bytes))
+                    
+                    canvas_res = st_canvas(
+                        fill_color="rgba(0, 0, 0, 1)",  # מילוי שחור לסימון
+                        stroke_width=2,
+                        stroke_color="rgba(255, 0, 0, 1)", # מסגרת אדומה
+                        background_image=bg_image,
+                        update_streamlit=True,
+                        height=bg_image.height,
+                        width=bg_image.width,
+                        drawing_mode="rect",
+                        key=f"canvas_{uploaded.name}_{page_num}",
+                    )
+                    canvas_results.append((page_num, canvas_res))
+
+            st.markdown("---")
+            if st.button(f"🖊️ בצע השחרה מדויקת", type="primary"):
+                if not REDACTORS_AVAILABLE:
+                    st.error("❌ מנוע ההשחרה חסר, לא ניתן להשחיר.")
+                else:
+                    with st.spinner("מבצע השחרה פיזית (מלבנים שחורים)..."):
+                        selected_findings = []
+                        # אוסף אזורים מהטבלה
+                        if findings:
+                            selected_findings.extend([findings[i] for i in selected_indices])
+                        
+                        # אוסף מלבנים שצוירו בעכבר
+                        for page_num, c_res in canvas_results:
+                            if c_res is not None and c_res.json_data is not None:
+                                for obj in c_res.json_data.get("objects", []):
+                                    if obj.get("type") == "rect":
+                                        x0 = obj["left"]
+                                        y0 = obj["top"]
+                                        x1 = x0 + obj["width"] * obj["scaleX"]
+                                        y1 = y0 + obj["height"] * obj["scaleY"]
+                                        
+                                        # התמונה רונדרה בגודל פי 1.1, אז מחלקים ב-1.1 כדי לקבל את הקואורדינטות המקוריות ב-PDF
+                                        scale_factor = 1.1
+                                        selected_findings.append({
+                                            "page": page_num,
+                                            "rect": [x0/scale_factor, y0/scale_factor, x1/scale_factor, y1/scale_factor]
+                                        })
+                        
+                        if not selected_findings:
+                            st.warning("לא סומנו אזורים להשחרה.")
+                        else:
+                            redactor = PdfRedactor()
+                            redacted_bytes = redactor.redact_pdf_by_coords(st.session_state["pdf_bytes"], selected_findings)
+                            
+                            if redacted_bytes:
+                                # שומר ב-Session State כדי לא לאבד ב-Rerun!
+                                st.session_state["ready_for_download"] = True
+                                st.session_state["redacted_bytes_to_download"] = redacted_bytes
+                                st.experimental_rerun()
+                            else:
+                                st.error("❌ שגיאה ביצירת הקובץ המושחר.")
+            
+            # כפתור ההורדה מוצג באופן עצמאי באמצעות HTML ישיר לעקיפת הבאג של Streamlit
+            if st.session_state.get("ready_for_download") and st.session_state.get("redacted_bytes_to_download"):
+                st.success("✅ ההשחרה הושלמה בהצלחה!")
+                
+                # המרה ל-Base64 ויצירת כפתור HTML טהור כמו בתוסף הדפדפן
+                import base64
+                b64 = base64.b64encode(st.session_state["redacted_bytes_to_download"]).decode()
+                href = f'''
+                <a href="data:application/pdf;base64,{b64}" download="redacted_document.pdf" 
+                   style="display: inline-block; padding: 0.5em 1em; color: white; background-color: #6c63ff; 
+                          border-radius: 5px; text-decoration: none; font-weight: bold; border: 1px solid #5a52d5;">
+                   ⬇️ הורד PDF מושחר (הורדה ישירה)
+                </a>
+                <br><br>
+                '''
+                st.markdown(href, unsafe_allow_html=True)
 
 # ────────────────────────────────────────────────────────────────────
 # TAB 5 — AI Pipeline (כל פורמט)
