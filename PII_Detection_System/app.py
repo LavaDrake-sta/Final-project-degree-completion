@@ -63,6 +63,8 @@ except ImportError:
 ENTITY_HEBREW = {
     # ישראלי
     "IL_ID":             "תעודת זהות ישראלית",
+    "israeli_id":        "תעודת זהות ישראלית",
+    "military_id":       "מספר אישי צבאי",
     "IL_PHONE":          "מספר טלפון ישראלי",
     "HEB_ADDRESS":       "כתובת בעברית",
     # כללי
@@ -71,6 +73,13 @@ ENTITY_HEBREW = {
     "PHONE_NUMBER":      "מספר טלפון",
     "CREDIT_CARD":       "כרטיס אשראי",
     "IBAN_CODE":         "מספר IBAN (חשבון בנק)",
+    "iban":              "מספר חשבון בנק בינלאומי (IBAN)",
+    "vehicle_license_plate": "לוחית רישוי (רכב)",
+    "ip_address":        "כתובת רשת (IP)",
+    "passport":          "מספר דרכון (זר)",
+    "biometric":         "מידע ביומטרי / גנטי",
+    "criminal_record":   "רישום ועבר פלילי",
+    "beliefs_and_views": "דעות וצנעת אישות",
     "CRYPTO":            "ארנק קריפטו",
     "LOCATION":          "מיקום / כתובת",
     "DATE_TIME":         "תאריך / שעה",
@@ -93,7 +102,7 @@ def translate_entity(entity_type: str) -> str:
 
 # ─── cache: load engines once ────────────────────────────────────
 @st.cache_resource(show_spinner="⏳ טוען מנועי AI... (רק בפעם הראשונה)")
-def load_all_engines():
+def load_all_engines_v3():
     detector       = BasicPIIDetector()
     image_proc     = ImageProcessor()
     pdf_proc       = PDFProcessor()
@@ -106,7 +115,17 @@ def load_all_engines():
             ai_error = str(e)
     return detector, image_proc, pdf_proc, ai_pipeline, ai_error
 
-detector, image_processor, pdf_processor, ai_pipeline, _ai_error = load_all_engines()
+@st.cache_resource(show_spinner="⏳ טוען מנוע זיהוי תמונות (OCR), ייתכן שייקח מעט זמן בפעם הראשונה...")
+def load_ocr_engine():
+    try:
+        import easyocr
+        # False for GPU since we are assuming standard local deployment without CUDA setup
+        return easyocr.Reader(['he', 'en'], gpu=False)
+    except Exception as e:
+        print(f"EasyOCR Error: {e}")
+        return None
+
+detector, image_processor, pdf_processor, ai_pipeline, _ai_error = load_all_engines_v3()
 
 # ═══════════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -460,42 +479,97 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
         text = page.get_text()
         
         page_findings = []
-        if use_ai and ai_pipeline_engine:
-            rep = ai_pipeline_engine.process_file(file_bytes=text.encode('utf-8', errors='ignore'), filename="dummy.txt")
-            if rep.get("success") and "entities" in rep:
-                for e in rep["entities"]:
-                    entity_text = e.get("text", "")
-                    if not entity_text.strip(): continue
-                    category = e.get("entity_type", "PII")
-                    score = e.get("score", 0)
-                    for area in page.search_for(entity_text):
-                        finding = {
-                            "page": page_num,
-                            "rect": [area.x0, area.y0, area.x1, area.y1],
-                            "text": entity_text,
-                            "type": category,
-                            "score": score,
-                            "sensitivity": "HIGH",
-                            "id": f"{page_num}_{area.x0}_{area.y0}"
-                        }
-                        page_findings.append(finding)
+        
+        # זיהוי PDF סרוק: אם אין כמעט טקסט, נפעיל סריקת OCR ויזואלית על הדף
+        # העלינו את הסף ל-30 כדי להתגבר על שכבות טקסט של תווי זבל או רווחים נסתרים
+        if len(text.strip()) < 30:
+            ocr_engine = load_ocr_engine()
+            if ocr_engine:
+                import io
+                import numpy as np
+                from PIL import Image
+                # משתמשים ברזולוציה גבוהה יחסית לטובת זיהוי טקסט מדויק יותר
+                pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+                img = Image.open(io.BytesIO(pix.tobytes()))
+                img_array = np.array(img)
+                ocr_results = ocr_engine.readtext(img_array)
+                
+                # נעבור על כל מילה/משפט שזוהו בתמונה
+                for bbox, snippet_text, conf in ocr_results:
+                    if not snippet_text.strip(): continue
+                    
+                    snippet_findings = []
+                    if use_ai and ai_pipeline_engine:
+                        rep = ai_pipeline_engine.process_file(file_bytes=snippet_text.encode('utf-8', errors='ignore'), filename="dummy.txt")
+                        if rep.get("success") and "entities" in rep:
+                            snippet_findings = rep["entities"]
+                    else:
+                        res = detector_engine.analyze_text(snippet_text)
+                        for match in res.get("matches", []):
+                            if match.confidence >= 0.4:
+                                snippet_findings.append({
+                                    "text": match.text,
+                                    "entity_type": match.category,
+                                    "score": match.confidence,
+                                    "sensitivity": match.sensitivity.name if hasattr(match.sensitivity, 'name') else ""
+                                })
+                                
+                    if snippet_findings:
+                        # המרת הקואורדינטות של OCR חזרה לפרופורציות המקוריות של ה-PDF
+                        # כי השתמשנו ב-Matrix(2.0, 2.0)
+                        x_coords = [p[0]/2.0 for p in bbox]
+                        y_coords = [p[1]/2.0 for p in bbox]
+                        rect = [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
+                        
+                        for sf in snippet_findings:
+                            finding = {
+                                "page": page_num,
+                                "rect": rect,
+                                "text": sf.get("text", snippet_text),
+                                "type": sf.get("entity_type", sf.get("type", "PII")),
+                                "score": sf.get("score", conf),
+                                "sensitivity": sf.get("sensitivity", "HIGH"),
+                                "id": f"ocr_{page_num}_{rect[0]}_{rect[1]}"
+                            }
+                            page_findings.append(finding)
         else:
-            res = detector_engine.analyze_text(text)
-            for match in res.get("matches", []):
-                if match.confidence >= 0.4:
-                    entity_text = match.text
-                    category = match.category
-                    for area in page.search_for(entity_text):
-                        finding = {
-                            "page": page_num,
-                            "rect": [area.x0, area.y0, area.x1, area.y1],
-                            "text": entity_text,
-                            "type": category,
-                            "score": match.confidence,
-                            "sensitivity": match.sensitivity.name if hasattr(match.sensitivity, 'name') else "",
-                            "id": f"{page_num}_{area.x0}_{area.y0}_{category}"
-                        }
-                        page_findings.append(finding)
+            # הלוגיקה הרגילה (לטקסט דיגיטלי נקי)
+            if use_ai and ai_pipeline_engine:
+                rep = ai_pipeline_engine.process_file(file_bytes=text.encode('utf-8', errors='ignore'), filename="dummy.txt")
+                if rep.get("success") and "entities" in rep:
+                    for e in rep["entities"]:
+                        entity_text = e.get("text", "")
+                        if not entity_text.strip(): continue
+                        category = e.get("entity_type", "PII")
+                        score = e.get("score", 0)
+                        for area in page.search_for(entity_text):
+                            finding = {
+                                "page": page_num,
+                                "rect": [area.x0, area.y0, area.x1, area.y1],
+                                "text": entity_text,
+                                "type": category,
+                                "score": score,
+                                "sensitivity": "HIGH",
+                                "id": f"{page_num}_{area.x0}_{area.y0}"
+                            }
+                            page_findings.append(finding)
+            else:
+                res = detector_engine.analyze_text(text)
+                for match in res.get("matches", []):
+                    if match.confidence >= 0.4:
+                        entity_text = match.text
+                        category = match.category
+                        for area in page.search_for(entity_text):
+                            finding = {
+                                "page": page_num,
+                                "rect": [area.x0, area.y0, area.x1, area.y1],
+                                "text": entity_text,
+                                "type": category,
+                                "score": match.confidence,
+                                "sensitivity": match.sensitivity.name if hasattr(match.sensitivity, 'name') else "",
+                                "id": f"{page_num}_{area.x0}_{area.y0}_{category}"
+                            }
+                            page_findings.append(finding)
                         
         # סינון כפילויות בעמוד הנוכחי 
         unique_page_findings = []
