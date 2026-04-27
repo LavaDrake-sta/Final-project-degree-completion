@@ -609,6 +609,7 @@ with tab_pdf:
                         height=bg_image.height,
                         width=bg_image.width,
                         drawing_mode="rect",
+                        display_toolbar=False,  # הסרת הסרגל כדי למנוע הורדה שגויה
                         key=f"canvas_{uploaded.name}_{page_num}",
                     )
                     canvas_results.append((page_num, canvas_res))
@@ -663,7 +664,7 @@ with tab_pdf:
                 import base64
                 b64 = base64.b64encode(st.session_state["redacted_bytes_to_download"]).decode()
                 href = f'''
-                <a href="data:application/pdf;base64,{b64}" download="redacted_document.pdf" 
+                <a href="data:application/octet-stream;base64,{b64}" download="redacted_document.pdf" 
                    style="display: inline-block; padding: 0.5em 1em; color: white; background-color: #6c63ff; 
                           border-radius: 5px; text-decoration: none; font-weight: bold; border: 1px solid #5a52d5;">
                    ⬇️ הורד PDF מושחר (הורדה ישירה)
