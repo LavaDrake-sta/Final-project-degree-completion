@@ -48,9 +48,9 @@ class WordRedactor:
                     redact_count += 1
             if modified:
                 run.text = new_text
-                # צביעת הרקע בשחור והטקסט בלבן
+                # צביעת הרקע בשחור והטקסט בשחור (כדי ליצור מלבן שחור אטום ללא טקסט קריא)
                 run.font.highlight_color = WD_COLOR_INDEX.BLACK
-                run.font.color.rgb = RGBColor(255, 255, 255)
+                run.font.color.rgb = RGBColor(0, 0, 0)
                 
         # שלב 2: בדיקה אם נשאר מידע רגיש שפוצל בין כמה Runs
         remaining_pii = False

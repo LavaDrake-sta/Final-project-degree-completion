@@ -44,7 +44,7 @@ class ExcelRedactor:
                 wb = openpyxl.load_workbook(io.BytesIO(excel_data))
                 
             black_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
-            white_font = Font(color="FFFFFF")
+            black_font = Font(color="000000")
 
             self.logger.info(f"🔒 מתחיל השחרת קובץ Excel. מספר מחרוזות PII להשחרה: {len(pii_texts)}")
             redact_count = 0
@@ -72,7 +72,7 @@ class ExcelRedactor:
                             if modified:
                                 cell.value = new_value
                                 cell.fill = black_fill
-                                cell.font = white_font
+                                cell.font = black_font
 
             self.logger.info(f"✅ סיום השחרה. {redact_count} חלקי מידע הופכו למחרוזת בינארית (0 ו-1).")
 

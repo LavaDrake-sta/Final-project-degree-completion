@@ -84,3 +84,52 @@ class PdfRedactor:
         except Exception as e:
             self.logger.error(f"❌ שגיאה בהשחרת ה-PDF: {e}")
             return None
+
+    def redact_pdf_by_coords(self, pdf_data: Union[str, bytes], findings: List[dict], output_path: Optional[str] = None) -> Union[bytes, str, None]:
+        """
+        השחרת נתונים לפי קואורדינטות מדויקות (מלבנים בעמודים ספציפיים).
+        זה מאפשר השחרה זהה לזו של PDFShield.
+        """
+        if not findings:
+            self.logger.warning("⚠️ לא התקבלו מיקומים להשחרה, הפעולה מבוטלת.")
+            return None
+
+        try:
+            if isinstance(pdf_data, str):
+                doc = fitz.open(pdf_data)
+            else:
+                doc = fitz.open("pdf", pdf_data)
+                
+            self.logger.info(f"🔒 מתחיל השחרת קובץ PDF לפי {len(findings)} קואורדינטות מדויקות.")
+            
+            for finding in findings:
+                page_idx = finding.get('page', 0)
+                if 0 <= page_idx < len(doc):
+                    rect_coords = finding.get('rect')
+                    if rect_coords and len(rect_coords) == 4:
+                        # השחרה מלאה ושחורה (0,0,0) לפי הקואורדינטות
+                        doc[page_idx].add_redact_annot(fitz.Rect(*rect_coords), fill=(0, 0, 0))
+                        
+            # החלת כל הערות ההשחרה בעמודים
+            for page in doc:
+                page.apply_redactions()
+                
+            self.logger.info("✅ השחרת PDF ויזואלית הסתיימה בהצלחה.")
+
+            if output_path:
+                doc.save(output_path)
+                doc.close()
+                return output_path
+            else:
+                import io
+                output_stream = io.BytesIO()
+                doc.save(output_stream)
+                output_stream.seek(0)
+                redacted_bytes = output_stream.read()
+                doc.close()
+                return redacted_bytes
+
+        except Exception as e:
+            self.logger.error(f"❌ שגיאה בהשחרת ה-PDF לפי קואורדינטות: {e}")
+            return None
+

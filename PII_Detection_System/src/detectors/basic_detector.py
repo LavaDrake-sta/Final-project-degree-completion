@@ -115,9 +115,14 @@ class BasicPIIDetector:
         # ─── תבניות Regex ─────────────────────────────────────────
         self.patterns = {
             'israeli_id': {
-                'pattern': r'\b\d{9}\b',
+                'pattern': r'\b\d{8,9}\b',
                 'sensitivity': SensitivityLevel.CRITICAL,
                 'description': 'מספר תעודת זהות ישראלית'
+            },
+            'military_id': {
+                'pattern': r'\b\d{7}\b',
+                'sensitivity': SensitivityLevel.CRITICAL,
+                'description': 'מספר אישי צבאי'
             },
             'phone_number': {
                 'pattern': r'\b0\d{1,2}-?\d{7,8}\b',
@@ -130,9 +135,29 @@ class BasicPIIDetector:
                 'description': 'כתובת דואר אלקטרוני'
             },
             'credit_card': {
-                'pattern': r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b',
+                'pattern': r'\b(?:\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}|\d{4}[-\s]?\d{6}[-\s]?\d{5})\b',
                 'sensitivity': SensitivityLevel.CRITICAL,
                 'description': 'מספר כרטיס אשראי'
+            },
+            'iban': {
+                'pattern': r'\bIL\d{21}\b',
+                'sensitivity': SensitivityLevel.HIGH,
+                'description': 'מספר חשבון בנק בינלאומי (IBAN)'
+            },
+            'vehicle_license_plate': {
+                'pattern': r'\b(?:\d{2}[-\s]?\d{3}[-\s]?\d{2}|\d{3}[-\s]?\d{2}[-\s]?\d{3}|\d{7,8})\b',
+                'sensitivity': SensitivityLevel.MEDIUM,
+                'description': 'לוחית רישוי (מספר רכב)'
+            },
+            'ip_address': {
+                'pattern': r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b',
+                'sensitivity': SensitivityLevel.MEDIUM,
+                'description': 'כתובת IP'
+            },
+            'passport': {
+                'pattern': r'\b[A-Za-z]{1,2}\d{7,8}\b',
+                'sensitivity': SensitivityLevel.HIGH,
+                'description': 'מספר דרכון (זר)'
             },
             'bank_account': {
                 'pattern': r'\b\d{6,12}\b',
@@ -210,6 +235,25 @@ class BasicPIIDetector:
                 ],
                 'sensitivity': SensitivityLevel.CRITICAL
             },
+            'biometric': {
+                'keywords': [
+                    'טביעת אצבע', 'זיהוי פנים', 'ביומטרי', 'דנא', 'DNA', 'מטען גנטי'
+                ],
+                'sensitivity': SensitivityLevel.CRITICAL
+            },
+            'criminal_record': {
+                'keywords': [
+                    'רישום פלילי', 'עבר פלילי', 'מאסר', 'עצור', 'חקירה פלילית', 'כתב אישום'
+                ],
+                'sensitivity': SensitivityLevel.CRITICAL
+            },
+            'beliefs_and_views': {
+                'keywords': [
+                    'נטייה פוליטית', 'השקפת עולם', 'השתייכות מפלגתית', 'אמונה דתית',
+                    'נטייה מינית', 'העדפה מינית', 'יחסי אישות'
+                ],
+                'sensitivity': SensitivityLevel.CRITICAL
+            }
         }
 
         logger.info("✅ BasicPIIDetector מוכן")
@@ -337,11 +381,13 @@ class BasicPIIDetector:
 
         logger.info(f"🔍 מתחיל ניתוח PII | {len(text)} תווים")
         try:
+            # זיהוי דפוסים וערכי הקשר בלבד (מבטלים את השחרת מילות המפתח הכלליות כדי למנוע השחרת מילים כמו "ת.ז" או "אשראי")
             pattern_matches  = self.detect_patterns(text)
             context_matches  = self.detect_context_keywords(text)
             keyword_matches  = self.detect_keywords(text)
 
-            all_matches = pattern_matches + context_matches + keyword_matches
+            # איחוד הממצאים הפיזיים בלבד (דפוסים והקשרים מדויקים)
+            all_matches = pattern_matches + context_matches
 
             # Span-based dedup
             unique_matches = self._span_dedup(all_matches)
