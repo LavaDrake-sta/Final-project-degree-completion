@@ -13,6 +13,24 @@ import json
 import pytesseract
 from datetime import datetime
 
+# ─── Logging ─────────────────────────────────────────────────────
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+try:
+    from src.logger_config import get_logger
+except ImportError:
+    try:
+        from logger_config import get_logger
+    except ImportError:
+        import logging
+        def get_logger(name):
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s | %(levelname)-8s | %(name)-28s | %(message)s',
+                datefmt='%H:%M:%S'
+            )
+            return logging.getLogger(name)
+app_logger = get_logger("PII.App")
+
 # ─── set_page_config חייב להיות ראשון ────────────────────────────
 st.set_page_config(
     page_title="מערכת זיהוי PII",
@@ -62,29 +80,48 @@ except ImportError:
 # ─── תרגום סוגי ישויות לעברית ────────────────────────────────────
 ENTITY_HEBREW = {
     # ישראלי
-    "IL_ID":             "תעודת זהות ישראלית",
-    "IL_PHONE":          "מספר טלפון ישראלי",
-    "HEB_ADDRESS":       "כתובת בעברית",
+    "IL_ID":              "תעודת זהות ישראלית",
+    "IL_PHONE":           "מספר טלפון ישראלי",
+    "HEB_ADDRESS":        "כתובת בעברית",
+    "HEB_NAME":           "שם בעברית",
+    "DATE_OF_BIRTH":      "תאריך לידה",
+    "IL_PERSONAL_NUMBER": "מספר אישי",
+    "IL_BANK_ACCOUNT":    "חשבון בנק ישראלי",
+    "IL_BANK_BRANCH":     "סניף בנק",
+    # context-based (basic detector)
+    "context_id":         "תעודת זהות (הקשר)",
+    "context_phone":      "טלפון (הקשר)",
+    "context_name":       "שם אדם (הקשר)",
+    "context_birthdate":  "תאריך לידה (הקשר)",
+    "context_address":    "כתובת (הקשר)",
+    "context_bank":       "חשבון בנק (הקשר)",
+    "context_personal_num": "מספר אישי (הקשר)",
+    "keyword_medical":    "מידע רפואי",
+    "keyword_financial":  "מידע פיננסי",
+    "keyword_personal":   "מידע אישי",
+    "keyword_identification": "מסמך זיהוי",
     # כללי
-    "PERSON":            "שם אדם",
-    "EMAIL_ADDRESS":     "כתובת אימייל",
-    "PHONE_NUMBER":      "מספר טלפון",
-    "CREDIT_CARD":       "כרטיס אשראי",
-    "IBAN_CODE":         "מספר IBAN (חשבון בנק)",
-    "CRYPTO":            "ארנק קריפטו",
-    "LOCATION":          "מיקום / כתובת",
-    "DATE_TIME":         "תאריך / שעה",
-    "NRP":               "לאום / דת / גזע",
-    "MEDICAL_LICENSE":   "רישיון רפואי",
-    "URL":               "כתובת אתר",
-    "IP_ADDRESS":        "כתובת IP",
-    "AGE":               "גיל",
+    "PERSON":             "שם אדם",
+    "EMAIL_ADDRESS":      "כתובת אימייל",
+    "PHONE_NUMBER":       "מספר טלפון",
+    "CREDIT_CARD":        "כרטיס אשראי",
+    "IBAN_CODE":          "מספר IBAN (חשבון בנק)",
+    "CRYPTO":             "ארנק קריפטו",
+    "LOCATION":           "מיקום / כתובת",
+    "DATE_TIME":          "תאריך / שעה",
+    "NRP":                "לאום / דת / גזע",
+    "MEDICAL_LICENSE":    "רישיון רפואי",
+    "URL":                "כתובת אתר",
+    "IP_ADDRESS":         "כתובת IP",
+    "AGE":                "גיל",
+    "JOB_TITLE":          "תפקיד",
+    "PROFESSION":         "מקצוע",
     # אמריקאי
-    "US_SSN":            "מזהה אמריקאי (SSN)",
-    "US_PASSPORT":       "דרכון אמריקאי",
-    "US_DRIVER_LICENSE": "רישיון נהיגה אמריקאי",
-    "US_BANK_NUMBER":    "מספר חשבון בנק (US)",
-    "US_ITIN":           "מזהה מס אמריקאי",
+    "US_SSN":             "מזהה אמריקאי (SSN)",
+    "US_PASSPORT":        "דרכון אמריקאי",
+    "US_DRIVER_LICENSE":  "רישיון נהיגה אמריקאי",
+    "US_BANK_NUMBER":     "מספר חשבון בנק (US)",
+    "US_ITIN":            "מזהה מס אמריקאי",
 }
 
 def translate_entity(entity_type: str) -> str:
@@ -113,7 +150,7 @@ detector, image_processor, pdf_processor, ai_pipeline, _ai_error = load_all_engi
 # ═══════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.title("🔒 PII Detection")
-    st.caption("פרויקט גמר 2024")
+    st.caption("פרויקט גמר 2026")
     st.divider()
 
     st.subheader("⚙️ מנוע זיהוי")
