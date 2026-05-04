@@ -2,7 +2,7 @@
 Image Processor - עיבוד תמונות עם OCR
 פרויקט גמר - זיהוי מידע אישי רגיש
 
-מודול לקריאת טקסט מתמונות באמצעות OCR - גרסה מתוקנת
+מודול לקריאת טקסט מתמונות - תומך OCR עברי+אנגלי
 """
 
 import cv2
@@ -14,24 +14,38 @@ import os
 from typing import Dict, Tuple, Optional
 import logging
 
+try:
+    from src.logger_config import get_logger
+except ImportError:
+    try:
+        from logger_config import get_logger
+    except ImportError:
+        def get_logger(name):
+            logging.basicConfig(level=logging.INFO)
+            return logging.getLogger(name)
+
 # הגדרת Tesseract לWindows
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 class ImageProcessor:
     """
-    מעבד תמונות עם יכולות OCR מתקדמות
+    מעבד תמונות עם יכולות OCR מתקדמות.
+    תומך בעברית+אנגלית.
     """
 
     def __init__(self):
         """אתחול המעבד"""
-        self.setup_logging()
+        self.logger = get_logger("PII.Processor.Image")
+        self.logger.info("🔧 אתחול ImageProcessor...")
 
-        # הגדרות OCR פשוטות ויעילות
+        # OCR configs בסדר עדיפות: עברי+אנגלי → עברי → אנגלי → ברירת מחדל
         self.tesseract_configs = [
-            r'--oem 3 --psm 6 -l eng',         # אנגלית בלבד - הכי אמין
-            r'--oem 3 --psm 3 -l eng',         # אנגלית אוטומטי
-            r'--oem 3 --psm 6',                # ברירת מחדל
-            r'--oem 3 --psm 11 -l eng',        # אנגלית טקסט דליל
+            r'--oem 3 --psm 6 -l heb+eng',
+            r'--oem 3 --psm 3 -l heb+eng',
+            r'--oem 3 --psm 6 -l heb',
+            r'--oem 3 --psm 6 -l eng',
+            r'--oem 3 --psm 6',
+            r'--oem 3 --psm 11 -l eng',
         ]
 
         # בדיקה שTesseract מותקן
@@ -40,11 +54,6 @@ class ImageProcessor:
             self.logger.info("✅ Tesseract מותקן ופועל")
         except Exception as e:
             self.logger.error(f"❌ בעיה עם Tesseract: {e}")
-
-    def setup_logging(self):
-        """הגדרת לוגים"""
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
 
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
         """עיבוד מקדים פשוט של התמונה"""

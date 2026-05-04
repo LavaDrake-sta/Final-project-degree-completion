@@ -3,6 +3,7 @@ PDF Processor - עיבוד קבצי PDF
 פרויקט גמר - זיהוי מידע אישי רגיש
 
 מודול לחילוץ טקסט מקבצי PDF (רגילים וסרוקים)
+שיפורים: OCR עברי + לוגים מרכזיים
 """
 
 import fitz  # PyMuPDF
@@ -14,17 +15,37 @@ import numpy as np
 from typing import Dict, List, Optional, Union
 import os
 
+try:
+    from src.logger_config import get_logger
+except ImportError:
+    try:
+        from logger_config import get_logger
+    except ImportError:
+        def get_logger(name):
+            logging.basicConfig(level=logging.INFO)
+            return logging.getLogger(name)
+
+
 
 class PDFProcessor:
     """
-    מעבד PDF עם תמיכה בקבצים רגילים וסרוקים
+    מעבד PDF עם תמיכה בקבצים רגילים וסרוקים.
+    תומך ב-OCR עברי+אנגלי.
     """
+
+    # OCR configs בסדר עדיפות: עברי+אנגלי → אנגלי בלבד → ברירת מחדל
+    OCR_CONFIGS = [
+        r'--oem 3 --psm 6 -l heb+eng',
+        r'--oem 3 --psm 6 -l heb',
+        r'--oem 3 --psm 6 -l eng',
+        r'--oem 3 --psm 3',
+    ]
 
     def __init__(self):
         """אתחול המעבד"""
-        self.setup_logging()
+        self.logger = get_logger("PII.Processor.PDF")
+        self.logger.info("🔧 אתחול PDFProcessor...")
 
-        # ייבוא מעבד התמונות לOCR
         try:
             from .image_processor import ImageProcessor
             self.image_processor = ImageProcessor()
@@ -35,10 +56,6 @@ class PDFProcessor:
             self.ocr_available = False
             self.logger.warning("⚠️ OCR לא זמין - רק PDF עם טקסט")
 
-    def setup_logging(self):
-        """הגדרת לוגים"""
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
 
     def extract_text_from_pdf(self, pdf_data: Union[str, bytes],
                               filename: str = "") -> Dict:
@@ -254,22 +271,40 @@ class PDFProcessor:
 
     def _ocr_pdf_page(self, page) -> str:
         """
-        OCR לעמוד PDF סרוק (כשאין טקסט כלל בעמוד)
+        OCR לעמוד PDF סרוק — מנסה configs עברי+אנגלי.
         """
         try:
             if not self.ocr_available:
                 return ""
 
-            # המרת העמוד לתמונה
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # הגדלה x2
+            import pytesseract
+            # המרת עמוד לתמונה ברזולוציה גבוהה
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
             img_data = pix.tobytes("png")
 
-            # OCR על התמונה
+            # ניסיון OCR עם מספר configs
+            for config in self.OCR_CONFIGS:
+                try:
+                    from PIL import Image
+                    import io as _io
+                    pil_img = Image.open(_io.BytesIO(img_data))
+                    text = pytesseract.image_to_string(pil_img, config=config)
+                    if text.strip():
+                        self.logger.info(
+                            f"✅ OCR עמוד הצליח עם config: {config[:30]} | "
+                            f"{len(text)} תווים"
+                        )
+                        return text
+                except Exception as e:
+                    self.logger.debug(f"  OCR config נכשל ({config[:20]}): {e}")
+                    continue
+
+            # fallback: image_processor
             ocr_result = self.image_processor.extract_text_from_image(
                 img_data, filename="pdf_page"
             )
-
             if ocr_result['success']:
+                self.logger.info(f"✅ OCR fallback הצליח: {len(ocr_result['text'])} תווים")
                 return ocr_result['text']
             else:
                 self.logger.warning(f"⚠️ OCR נכשל: {ocr_result.get('error', 'לא ידוע')}")

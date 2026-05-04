@@ -203,6 +203,63 @@ class BasicPIIDetector:
             (r'(?:מספר\s+אישי|מס[\'"]?\s*אישי|מ\.?א\.?)',
              'context_personal_num', SensitivityLevel.CRITICAL,
              r'[\s:]*(\d{5,9})'),
+            # סיסמה
+            (r'(?:סיסמה|סיסמא|קוד\s+סודי|password|pwd)',
+             'context_password', SensitivityLevel.CRITICAL,
+             r'[\s:״"=-]*([A-Za-z0-9@#$%^&+=*]{4,20})'),
+            # קופת חולים
+            (r'(?:קופת\s+חולים|קופ"ח|מכבי|כללית|מאוחדת|לאומית)',
+             'context_health_fund', SensitivityLevel.HIGH,
+             r'[\s:]*([א-ת\d\-\s]{3,20})'),
+            # ח.פ / תיק ניכויים
+            (r'(?:ח\.פ|ח\.צ|עוסק\s+מורשה|תיק\s+ניכויים)',
+             'context_company_id', SensitivityLevel.MEDIUM,
+             r'[\s:״"=-]*(\d{9})'),
+            # --- הרחבות חדשות (חוק הגנת הפרטיות) ---
+            # תיק רפואי / מטופל
+            (r'(?:תיק\s+רפואי|מספר\s+מטופל|קוד\s+מטופל|מזהה\s+רפואי)',
+             'context_medical_record', SensitivityLevel.CRITICAL,
+             r'[\s:״"=-]*([A-Za-z0-9\.\-]{3,15})'),
+            # סוג דם
+            (r'(?:סוג\s+דם|blood\s+type)',
+             'context_blood_type', SensitivityLevel.HIGH,
+             r'[\s:״"=-]*([ABO][+-]|AB[+-])'),
+            # פרופיל צבאי/רפואי
+            (r'(?:פרופיל\s+רפואי|פרופיל\s+צבאי|פרופיל)',
+             'context_military_profile', SensitivityLevel.HIGH,
+             r'[\s:״"=-]*(\d{2})'),
+            # קוד אבטחה כרטיס אשראי
+            (r'(?:CVV|CVC|קוד\s+אבטחה|בגב\s+הכרטיס)',
+             'context_cvv', SensitivityLevel.CRITICAL,
+             r'[\s:״"=-]*(\d{3,4})'),
+            # קוד אימות / גישה
+            (r'(?:קוד\s+אימות|קוד\s+גישה|PIN|OTP|קוד\s+סודי)',
+             'context_auth_code', SensitivityLevel.CRITICAL,
+             r'[\s:״"=-]*([a-zA-Z0-9]{4,10})'),
+            # שם משתמש
+            (r'(?:שם\s+משתמש|username|user)',
+             'context_username', SensitivityLevel.HIGH,
+             r'[\s:״"=-]*([a-zA-Z0-9_\.\-]{3,20})'),
+            # דרכון
+            (r'(?:מספר\s+דרכון|דרכון|passport)',
+             'context_passport', SensitivityLevel.CRITICAL,
+             r'[\s:״"=-]*([A-Za-z0-9]{5,15})'),
+            # רישיון נהיגה
+            (r'(?:רישיון\s+נהיגה|מספר\s+רישיון|driver\s+license)',
+             'context_driver_license', SensitivityLevel.HIGH,
+             r'[\s:״"=-]*(\d{5,10})'),
+            # לוחית רישוי (בהקשר)
+            (r'(?:לוחית\s+רישוי|מספר\s+רכב|רכב\s+מספר)',
+             'context_license_plate', SensitivityLevel.MEDIUM,
+             r'[\s:״"=-]*(\d{2,3}[-\s]?\d{2,3}[-\s]?\d{2,3})'),
+            # כתובת MAC
+            (r'(?:כתובת\s+MAC|MAC\s+address)',
+             'context_mac_address', SensitivityLevel.MEDIUM,
+             r'[\s:״"=-]*([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})'),
+            # מיקוד
+            (r'(?:מיקוד|zip\s+code|zipcode)',
+             'context_zipcode', SensitivityLevel.MEDIUM,
+             r'[\s:״"=-]*(\d{5,7})'),
         ]
 
         # ─── מילות מפתח רגישות (הקשר בלבד, לא ערך ספציפי) ───────
@@ -218,7 +275,9 @@ class BasicPIIDetector:
             'financial': {
                 'keywords': [
                     'משכורת', 'שכר חודשי', 'חוב', 'הלוואה', 'משכנתא',
-                    'כרטיס אשראי', 'ממון', 'חיוב חשבון', 'זיכוי'
+                    'כרטיס אשראי', 'ממון', 'חיוב חשבון', 'זיכוי',
+                    'סעיף 14', 'שווי נכס', 'תשלום מהנכס', 'הפקדות',
+                    'השלמה בצ\'ק', 'שכר', 'פיצויי פיטורין', 'פנסיה', 'תלוש שכר'
                 ],
                 'sensitivity': SensitivityLevel.HIGH
             },
