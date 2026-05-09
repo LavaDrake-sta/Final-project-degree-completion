@@ -54,9 +54,9 @@ class AIDecisionEngine:
 
         # משקלות לחישוב ציון סיכון
         self.risk_weights = {
-            'critical_pii_count': 30,  # מספר ממצאים קריטיים
-            'high_pii_count': 15,  # ממצאים ברמה גבוהה
-            'total_pii_count': 10,  # סך כל הממצאים
+            'critical_pii_count': 30,  # מספר findings קריטיים
+            'high_pii_count': 15,  # findings ברמה גבוהה
+            'total_pii_count': 10,  # סך כל הfindings
             'critical_categories': 25,  # קטגוריות קריטיות (ת.ז, רפואי)
             'compliance_issues': 20,  # בעיות תאימות
         }
@@ -113,7 +113,7 @@ class AIDecisionEngine:
 
         score = 0
 
-        # ספירת ממצאים לפי רמת רגישות
+        # ספירת findings לפי רמת רגישות
         critical_count = 0
         high_count = 0
 
@@ -156,7 +156,7 @@ class AIDecisionEngine:
             if min_score <= score <= max_score:
                 return level_name
 
-        return "לא ידוע"
+        return "unknown"
 
     def _determine_decision(self, risk_score: int, compliance_results: Dict) -> Decision:
         """קביעת ההחלטה הסופית"""
@@ -193,7 +193,7 @@ class AIDecisionEngine:
             ) / len(pii_results['matches'])
             confidence *= avg_match_confidence
 
-        # הפחתת ביטחון אם יש מעט ממצאים (אולי יש עוד שלא זוהו)
+        # הפחתת ביטחון אם יש מעט findings (אולי יש עוד שלא זוהו)
         if len(pii_results.get('matches', [])) < 3:
             confidence *= 0.9
 
@@ -206,15 +206,15 @@ class AIDecisionEngine:
         reasoning = []
 
         # הסבר כללי
-        reasoning.append(f"🎯 ציון סיכון: {risk_score}/100")
+        reasoning.append(f"🎯 ציון Risk: {risk_score}/100")
         reasoning.append(
-            f"📊 סטטוס תאימות: {compliance_results.get('status', 'לא ידוע').value if hasattr(compliance_results.get('status', ''), 'value') else 'לא ידוע'}")
+            f"📊 סטטוס תאימות: {compliance_results.get('status', 'unknown').value if hasattr(compliance_results.get('status', ''), 'value') else 'unknown'}")
         reasoning.append("")
 
-        # ניתוח ממצאים
+        # ניתוח findings
         total_matches = len(pii_results.get('matches', []))
         if total_matches > 0:
-            reasoning.append(f"🔍 נמצאו {total_matches} פריטי מידע רגיש:")
+            reasoning.append(f"🔍 Found {total_matches} sensitive info items:")
 
             # ספירה לפי סוג
             by_sensitivity = {}
@@ -224,7 +224,7 @@ class AIDecisionEngine:
 
             for sens, count in sorted(by_sensitivity.items(), reverse=True):
                 icon = "🔴" if sens == "CRITICAL" else "🟠" if sens == "HIGH" else "🟡"
-                reasoning.append(f"  {icon} {sens}: {count} ממצאים")
+                reasoning.append(f"  {icon} {sens}: {count} findings")
             reasoning.append("")
 
         # נימוק ההחלטה
@@ -285,7 +285,7 @@ class AIDecisionEngine:
 
         actions.append("")
         actions.append("📝 פעולות כלליות:")
-        actions.append("  1. סקור את כל הממצאים ברשימה")
+        actions.append("  1. סקור את כל הfindings ברשימה")
         actions.append("  2. תקן או הסר מידע רגיש")
         actions.append("  3. הרץ שוב את הבדיקה")
         actions.append("  4. אם נדרש - התייעץ עם יועץ משפטי")
@@ -356,7 +356,7 @@ class AIDecisionEngine:
 
         # החלטה
         report.append(f"🎯 החלטה: {decision_result.decision.value}")
-        report.append(f"📊 ציון סיכון: {decision_result.risk_score}/100 ({decision_result.risk_level})")
+        report.append(f"📊 ציון Risk: {decision_result.risk_score}/100 ({decision_result.risk_level})")
         report.append(f"🎲 רמת ביטחון: {decision_result.confidence:.0%}")
         report.append(f"🕐 זמן: {decision_result.timestamp}")
         report.append("")

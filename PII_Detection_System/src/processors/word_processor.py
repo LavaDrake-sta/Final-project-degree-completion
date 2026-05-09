@@ -11,6 +11,13 @@ import logging
 from typing import Dict, List, Union
 import os
 
+try:
+    from src.logger_config import get_logger, trace_execution
+except ImportError:
+    try:
+        from logger_config import get_logger, trace_execution
+    except ImportError:
+        def trace_execution(func): return func
 
 class WordProcessor:
     """
@@ -26,6 +33,7 @@ class WordProcessor:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
+    @trace_execution
     def extract_text_from_word(self, word_data: Union[str, bytes],
                                filename: str = "") -> Dict:
         """
@@ -40,7 +48,7 @@ class WordProcessor:
             else:
                 raise ValueError("סוג נתוני Word לא נתמך")
 
-            self.logger.info(f"📄 עיבוד Word: {len(doc.paragraphs)} פסקאות")
+            self.logger.info(f"📄 Processing Word: {len(doc.paragraphs)} paragraphs")
 
             # חילוץ טקסט מכל הפסקאות
             paragraphs_text = []
@@ -85,11 +93,11 @@ class WordProcessor:
                 'image_count': self._count_images(doc)
             }
 
-            self.logger.info(f"✅ Word: {len(full_text)} תווים, {len(doc.paragraphs)} פסקאות")
+            self.logger.info(f"✅ Word: {len(full_text)} characters, {len(doc.paragraphs)} paragraphs")
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בעיבוד Word: {e}")
+            self.logger.error(f"❌ Error in Processing Word: {e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -99,6 +107,7 @@ class WordProcessor:
                 'filename': filename
             }
 
+    @trace_execution
     def _extract_table_text(self, table) -> str:
         """חילוץ טקסט מטבלה"""
         try:
@@ -115,9 +124,10 @@ class WordProcessor:
             return "\n".join(table_text)
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בחילוץ טבלה: {e}")
+            self.logger.error(f"❌ Error extracting table: {e}")
             return ""
 
+    @trace_execution
     def _extract_headers_footers(self, doc) -> str:
         """חילוץ טקסט מכותרות עליונות ותחתונות"""
         try:
@@ -137,7 +147,7 @@ class WordProcessor:
             return "\n".join(headers_footers)
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בחילוץ כותרות: {e}")
+            self.logger.error(f"❌ Error extracting headers: {e}")
             return ""
 
     def _count_images(self, doc) -> int:
@@ -151,6 +161,7 @@ class WordProcessor:
         except:
             return 0
 
+    @trace_execution
     def get_word_info(self, word_data: Union[str, bytes]) -> Dict:
         """קבלת מידע על מסמך Word"""
         try:
@@ -179,12 +190,12 @@ class WordProcessor:
             return info
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בקבלת מידע Word: {e}")
+            self.logger.error(f"❌ Error getting Word info: {e}")
             return {}
 
 
 def is_word_file(filename: str) -> bool:
-    """בדיקה אם הקובץ הוא Word"""
+    """בדיקה אם הFile הוא Word"""
     if not filename:
         return False
     return filename.lower().endswith(('.docx', '.doc'))

@@ -25,6 +25,15 @@ except ImportError:
         def get_logger(name):
             logging.basicConfig(level=logging.INFO)
             return logging.getLogger(name)
+        def trace_execution(func): return func
+
+try:
+    from src.logger_config import trace_execution
+except ImportError:
+    try:
+        from logger_config import trace_execution
+    except ImportError:
+        def trace_execution(func): return func
 
 logger = get_logger("PII.Pipeline.Detector")
 
@@ -80,70 +89,82 @@ class PIIDetector:
         # Context keywords לשימוש ב-post-processing
         # (keyword_regex, entity_type, score, value_regex)
         self.context_kw_patterns = [
-            (r'(?:תעודת\s+זהות|ת\.?ז\.?|מספר\s+זהות|מס[\'"]?\s*זהות)',
-             'IL_ID', 0.95, r'[\s:״"]*(\d{7,9})'),
-            (r'(?:שם\s+(?:פרטי|משפחה|מלא|האב|אב|האם|אם)|שמו|שמה)',
-             'HEB_NAME', 0.9, r'[\s:״"]*([א-ת][א-ת\s]{1,30})'),
+            (r'(?:תעודת\s+זהות|ת\.?ז\.?|מספר\s+זהות|מס[\'"]?\s*זהות|מזהה)',
+             'IL_ID', 1.0, r'[\s:״"]*(\d{7,9})'),
+            (r'(?:שם\s+(?:פרטי|מלא|האב|אב|האם|אם)|שמו)',
+             'HEB_NAME', 0.95, r'[\s:״"]*([א-ת][א-ת\s]{1,30})'),
+            (r'(?:שם\s+משפחה|משפחה)',
+             'HEB_NAME', 0.95, r'[\s:״"]*([א-ת][א-ת\s]{1,30})'),
             (r'(?:תאריך\s+לידה|ת\.?\s*לידה|נולד(?:ה)?)',
-             'DATE_OF_BIRTH', 0.95, r'[\s:]*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})'),
+             'DATE_OF_BIRTH', 1.0, r'[\s:]*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})'),
             (r'(?:כתובת(?:\s+מגורים)?|מגורים|מרחוב)',
-             'HEB_ADDRESS', 0.85, r'[\s:]*([א-ת][א-ת\s\d,״\'"]{3,50})'),
+             'HEB_ADDRESS', 0.95, r'[\s:]*([א-ת][א-ת\s\d,״\'"]{3,50})'),
             (r'(?:חשבון\s+בנק|מספר\s+חשבון|ח[./]ב)',
-             'IL_BANK_ACCOUNT', 0.95, r'[\s:]*(\d{6,14})'),
+             'IL_BANK_ACCOUNT', 1.0, r'[\s:]*(\d{6,14})'),
             (r'(?:מספר\s+אישי|מס[\'"]?\s*אישי|מ\.?א\.?)',
-             'IL_PERSONAL_NUMBER', 0.95, r'[\s:]*(\d{5,9})'),
+             'IL_PERSONAL_NUMBER', 1.0, r'[\s:]*(\d{5,9})'),
             (r'(?:טל(?:פון)?\'?|נייד|פלאפון|סלולרי|טל\.)',
-             'IL_PHONE', 0.9, r'[\s:]*(\d[\d\-\s]{7,12})'),
+             'IL_PHONE', 1.0, r'[\s:]*(\+?\d[\d\-\s\.\–]{7,20})'),
             (r'(?:סיסמה|סיסמא|קוד\s+סודי|password|pwd)',
-             'PASSWORD', 0.95, r'[\s:״"=-]*([A-Za-z0-9@#$%^&+=*]{4,20})'),
+             'PASSWORD', 1.0, r'[\s:״"=-]*([A-Za-z0-9@#$%^&+=*]{4,20})'),
             (r'(?:קופת\s+חולים|קופ"ח|מכבי|כללית|מאוחדת|לאומית)',
-             'HEALTH_FUND', 0.85, r'[\s:]*([א-ת\d\-\s]{3,20})'),
+             'HEALTH_FUND', 0.95, r'[\s:]*([א-ת\d\-\s]{3,20})'),
             (r'(?:ח\.פ|ח\.צ|עוסק\s+מורשה|תיק\s+ניכויים)',
-             'IL_COMPANY_ID', 0.9, r'[\s:״"=-]*(\d{9})'),
+             'IL_COMPANY_ID', 1.0, r'[\s:״"=-]*(\d{9})'),
             (r'(?:תיק\s+רפואי|מספר\s+מטופל|קוד\s+מטופל|מזהה\s+רפואי)',
-             'MEDICAL_RECORD', 0.95, r'[\s:״"=-]*([A-Za-z0-9\.\-]{3,15})'),
+             'MEDICAL_RECORD', 1.0, r'[\s:״"=-]*([A-Za-z0-9\.\-]{3,15})'),
             (r'(?:סוג\s+דם|blood\s+type)',
-             'BLOOD_TYPE', 0.9, r'[\s:״"=-]*([ABO][+-]|AB[+-])'),
+             'BLOOD_TYPE', 1.0, r'[\s:״"=-]*([ABO][+-]|AB[+-])'),
             (r'(?:פרופיל\s+רפואי|פרופיל\s+צבאי|פרופיל)',
-             'MILITARY_PROFILE', 0.9, r'[\s:״"=-]*(\d{2})'),
+             'MILITARY_PROFILE', 1.0, r'[\s:״"=-]*(\d{2})'),
             (r'(?:CVV|CVC|קוד\s+אבטחה|בגב\s+הכרטיס)',
-             'CVV', 0.95, r'[\s:״"=-]*(\d{3,4})'),
+             'CVV', 1.0, r'[\s:״"=-]*(\d{3,4})'),
             (r'(?:קוד\s+אימות|קוד\s+גישה|PIN|OTP|קוד\s+סודי)',
-             'AUTH_CODE', 0.95, r'[\s:״"=-]*([a-zA-Z0-9]{4,10})'),
-            (r'(?:שם\s+משתמש|username|user)',
-             'USERNAME', 0.85, r'[\s:״"=-]*([a-zA-Z0-9_\.\-]{3,20})'),
+             'AUTH_CODE', 1.0, r'[\s:״"=-]*([a-zA-Z0-9]{4,10})'),
+            (r'(?:שם\s+משפחה|username|user)',
+             'USERNAME', 0.9, r'[\s:״"=-]*([a-zA-Z0-9_\.\-]{3,20})'),
             (r'(?:מספר\s+דרכון|דרכון|passport)',
-             'PASSPORT', 0.95, r'[\s:״"=-]*([A-Za-z0-9]{5,15})'),
+             'PASSPORT', 1.0, r'[\s:״"=-]*([A-Za-z0-9]{5,15})'),
             (r'(?:רישיון\s+נהיגה|מספר\s+רישיון|driver\s+license)',
-             'DRIVER_LICENSE', 0.9, r'[\s:״"=-]*(\d{5,10})'),
+             'DRIVER_LICENSE', 1.0, r'[\s:״"=-]*(\d{5,10})'),
             (r'(?:לוחית\s+רישוי|מספר\s+רכב|רכב\s+מספר)',
-             'LICENSE_PLATE', 0.85, r'[\s:״"=-]*(\d{2,3}[-\s]?\d{2,3}[-\s]?\d{2,3})'),
+             'LICENSE_PLATE', 0.9, r'[\s:״"=-]*(\d{2,3}[-\s]?\d{2,3}[-\s]?\d{2,3})'),
             (r'(?:כתובת\s+MAC|MAC\s+address)',
-             'MAC_ADDRESS', 0.85, r'[\s:״"=-]*([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})'),
+             'MAC_ADDRESS', 0.9, r'[\s:״"=-]*([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})'),
             (r'(?:מיקוד|zip\s+code|zipcode)',
-             'ZIPCODE', 0.85, r'[\s:״"=-]*(\d{5,7})'),
+             'ZIPCODE', 0.9, r'[\s:״"=-]*(\d{5,7})'),
         ]
 
-        logger.info("✅ PIIDetector מוכן")
+        # כיוון הפוך: ערך ואז כותרת (נפוץ בטבלאות/טפסים)
+        self.context_kw_suffix_patterns = [
+            ('IL_ID', 1.0, r'(\d{7,9})', r'[\s:״"]*(?:תעודת\s+זהות|ת\.?ז\.?|מספר\s+זהות|מס[\'"]?\s*זהות)'),
+            ('IL_PERSONAL_NUMBER', 1.0, r'(\d{5,9})', r'[\s:״"]*(?:מספר\s+אישי|מס[\'"]?\s*אישי|מ\.?א\.?)'),
+            ('HEB_NAME', 0.95, r'([א-ת]{2,15})', r'[\s:״"]*(?:שם\s+פרטי|שם\s+משפחה|שם\s+מלא)'),
+            ('IL_BANK_ACCOUNT', 1.0, r'(\d{6,14})', r'[\s:״"]*(?:חשבון\s+בנק|מספר\s+חשבון|ח[./]ב)'),
+        ]
+
+
+        logger.info("✅ PIIDetector ready")
 
     # ─── Custom Recognizers ────────────────────────────────────────
+    @trace_execution
     def _add_israeli_recognizers(self):
         """הוספת recognizers ישראליים מותאמים אישית"""
 
         # 1. תעודת זהות ישראלית
         il_id_recognizer = PatternRecognizer(
             supported_entity="IL_ID",
-            patterns=[Pattern(name="israeli_id", regex=r'\b\d{9}\b', score=0.85)],
+            patterns=[Pattern(name="israeli_id", regex=r'\b\d{1}[-\s]?\d{7,8}\b|\b\d{9}\b', score=0.85)],
             context=["תעודת זהות", "ת.ז", "ת\"ז", "תז", "זהות", "מספר זהות",
                      "id", "identity", "מזהה"]
         )
         self.registry.add_recognizer(il_id_recognizer)
 
-        # 2. טלפון ישראלי
+        # 2. טלפון ישראלי (מורחב: כולל קידומת בינלאומית, רווחים ומקפים מגוונים)
         il_phone_recognizer = PatternRecognizer(
             supported_entity="IL_PHONE",
             patterns=[Pattern(name="israeli_phone",
-                              regex=r'\b0[57]\d{1}-?\d{7}\b|\b0[23489]-?\d{7}\b', score=0.8)],
+                              regex=r'\b(?:\+972[- ]?|0)([23489]|[57]\d)[- ]?\d{3}[- ]?\d{4}\b|\b(?:\+972|0)[- ]?\d[\d\-\s\–]{7,15}\b', score=0.8)],
             context=["טלפון", "נייד", "סלולרי", "פלאפון", "טל'", "טל.", "phone", "mobile",
                      "מספר טלפון", "ליצור קשר"]
         )
@@ -161,17 +182,17 @@ class PIIDetector:
         # 4. מספר אישי
         personal_num_recognizer = PatternRecognizer(
             supported_entity="IL_PERSONAL_NUMBER",
-            patterns=[Pattern(name="il_personal_number", regex=r'\b\d{6,8}\b', score=0.65)],
+            patterns=[Pattern(name="il_personal_number", regex=r'\b\d{2}[-\s]?\d{4,6}\b|\b\d{6,8}\b', score=0.65)],
             context=["מספר אישי", "מס' אישי", "מ.א.", "מספר עובד",
                      "מספר חייל", "personal number", "employee id",
                      "מספר מזהה", "מזהה עובד"]
         )
         self.registry.add_recognizer(personal_num_recognizer)
 
-        # 5. חשבון בנק ישראלי
+        # 5. חשבון בנק ישראלי - הורדת ציון ברירת מחדל כדי שcontext ינצח
         bank_account_recognizer = PatternRecognizer(
             supported_entity="IL_BANK_ACCOUNT",
-            patterns=[Pattern(name="il_bank_account", regex=r'\b\d{6,14}\b', score=0.75)],
+            patterns=[Pattern(name="il_bank_account", regex=r'\b\d[\d\-\s]{5,13}\d\b', score=0.4)],
             context=["חשבון בנק", "מספר חשבון", "ח/ב", "ח.ב", "העברה", "bank account",
                      "account number", "בנק", "הפקדה", "משיכה"]
         )
@@ -181,7 +202,7 @@ class PIIDetector:
         heb_name_recognizer = PatternRecognizer(
             supported_entity="HEB_NAME",
             patterns=[Pattern(name="heb_name",
-                              regex=r'\b[א-ת]{2,12}\s+[א-ת]{2,12}(?:\s+[א-ת]{2,12})?\b', score=0.55)],
+                               regex=r'\b[א-ת]{2,12}(?:\s+[א-ת]{2,12}){1,3}\b', score=0.4)],
             context=["שם", "שם פרטי", "שם משפחה", "שם מלא", "שם האב", "שם האם",
                      "לכבוד", "מאת", "חתום", "name", "full name"]
         )
@@ -224,39 +245,52 @@ class PIIDetector:
         )
         self.registry.add_recognizer(job_title_recognizer)
 
-        logger.info("✅ הוספו 9 recognizers ישראליים מותאמים")
+        logger.info("✅ Added 9 customized Israeli recognizers")
 
     # ─── Context Keyword Post-Processing ───────────────────────────
+    @trace_execution
     def detect_context_keywords(self, text: str) -> List[Dict[str, Any]]:
         """
-        זיהוי ערכים שבאים אחרי מילות מפתח (post-processing).
-        מחזיר רשימת dicts תואמות לפורמט Presidio.
+        זיהוי ערכים לפי מילות מפתח (לפני או אחרי הערך).
         """
         results = []
+        
+        # 1. כותרת לפני ערך (שם: ישראל)
         for kw_pattern, entity_type, score, val_pattern in self.context_kw_patterns:
             full_pattern = kw_pattern + val_pattern
             try:
                 for m in re.finditer(full_pattern, text, re.IGNORECASE | re.UNICODE):
                     if m.lastindex:
                         value = m.group(1).strip()
-                        value_start = m.start(1)
-                        value_end = m.end(1)
-                    else:
-                        value = m.group().strip()
-                        value_start = m.start()
-                        value_end = m.end()
-                    if value:
                         results.append({
                             "entity_type": entity_type,
-                            "start": value_start,
-                            "end": value_end,
+                            "start": m.start(1),
+                            "end": m.end(1),
                             "score": score,
                             "text": value,
                             "source": "context_keyword"
                         })
             except Exception as e:
-                logger.warning(f"שגיאה ב-context keyword {entity_type}: {e}")
-        logger.debug(f"🔑 Context keywords: {len(results)} ממצאים")
+                logger.warning(f"Error in context keyword {entity_type}: {e}")
+
+        # 2. ערך לפני כותרת (1234567 מספר זהות)
+        for entity_type, score, val_pattern, kw_suffix in self.context_kw_suffix_patterns:
+            full_pattern = val_pattern + kw_suffix
+            try:
+                for m in re.finditer(full_pattern, text, re.IGNORECASE | re.UNICODE):
+                    value = m.group(1).strip()
+                    results.append({
+                        "entity_type": entity_type,
+                        "start": m.start(1),
+                        "end": m.end(1),
+                        "score": score,
+                        "text": value,
+                        "source": "context_keyword"
+                    })
+            except Exception as e:
+                logger.warning(f"Error in context suffix {entity_type}: {e}")
+
+        logger.debug(f"🔑 Context keywords: {len(results)} findings")
         return results
 
     # ─── Overlap Dedup ─────────────────────────────────────────────
@@ -264,37 +298,57 @@ class PIIDetector:
     def _overlap_dedup(entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         מסיר כפילויות לפי חפיפת span.
-        אם span A כולל את span B, שומר רק את A (הארוך/עם הציון הגבוה יותר).
+        עדיפות ל-context_keyword ולציונים גבוהים.
         """
         if not entities:
             return []
 
-        # מיון לפי start, ואז score יורד
-        sorted_e = sorted(entities, key=lambda e: (e["start"], -e["score"]))
-        result = []
+        # מיון: עדיפות ל-context_keyword, אח"כ אורך, אח"כ ציון
+        def sort_key(e):
+            priority = 0
+            if e.get("source") == "context_keyword": priority = 2
+            elif e.get("source") == "presidio": priority = 1
+            return (e["start"], priority, (e["end"] - e["start"]), e["score"])
 
+        sorted_e = sorted(entities, key=sort_key, reverse=True) # Sort reverse to pick best first
+        # Actually, let's sort by start pos and then use a standard logic
+        sorted_e = sorted(entities, key=lambda e: (e["start"], -e["score"]))
+
+        result = []
         for candidate in sorted_e:
             cstart, cend = candidate["start"], candidate["end"]
-            overlapping = [
-                i for i, ex in enumerate(result)
-                if cstart < ex["end"] and cend > ex["start"]
-            ]
-            if not overlapping:
+            
+            # האם יש חפיפה עם משהו שכבר נבחר?
+            overlap_idx = -1
+            for i, ex in enumerate(result):
+                if max(cstart, ex["start"]) < min(cend, ex["end"]):
+                    overlap_idx = i
+                    break
+            
+            if overlap_idx == -1:
                 result.append(candidate)
             else:
-                # שמור את זה עם ה-score הגבוה / ה-span הארוך יותר
-                for idx in overlapping:
-                    ex = result[idx]
-                    span_len_candidate = cend - cstart
-                    span_len_existing  = ex["end"] - ex["start"]
-                    if (candidate["score"] > ex["score"] or
-                            span_len_candidate > span_len_existing):
-                        result[idx] = candidate
-                        break
+                existing = result[overlap_idx]
+                # חוקי דריסה:
+                # 1. Context keyword דורס הכל
+                # 2. ציון גבוה יותר דורס נמוך יותר
+                # 3. אם זה אותו ציון, הארוך יותר מנצח
+                cand_priority = 1 if candidate.get("source") == "context_keyword" else 0
+                exis_priority = 1 if existing.get("source") == "context_keyword" else 0
+                
+                if cand_priority > exis_priority:
+                    result[overlap_idx] = candidate
+                elif cand_priority == exis_priority:
+                    if candidate["score"] > existing["score"]:
+                        result[overlap_idx] = candidate
+                    elif candidate["score"] == existing["score"]:
+                        if (cend - cstart) > (existing["end"] - existing["start"]):
+                            result[overlap_idx] = candidate
 
         return sorted(result, key=lambda e: e["start"])
 
     # ─── ניתוח ראשי ────────────────────────────────────────────────
+    @trace_execution
     def analyze(self, text: str, language: str = "en") -> List[Dict[str, Any]]:
         """
         ניתוח טקסט + context keywords + overlap dedup.
@@ -302,7 +356,7 @@ class PIIDetector:
         if not text.strip():
             return []
 
-        logger.info(f"🤖 Presidio מנתח | {len(text)} תווים")
+        logger.info(f"🤖 Presidio analyzing | {len(text)} characters")
 
         # Presidio
         presidio_results = self.analyzer.analyze(text=text, entities=[], language="en")
@@ -327,10 +381,11 @@ class PIIDetector:
         logger.info(
             f"✅ Presidio={len(presidio_entities)}, "
             f"Context={len(context_entities)} → "
-            f"ייחודי={len(deduped)}"
+            f"unique={len(deduped)}"
         )
         return deduped
 
+    @trace_execution
     def anonymize(self, text: str, analyzer_results) -> str:
         """אנונימיזציה לפי תוצאות Presidio"""
         if not text.strip() or not analyzer_results:

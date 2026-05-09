@@ -2,11 +2,19 @@
 PDF Redactor - השחרת קבצי PDF
 פרויקט גמר - זיהוי מידע אישי רגיש
 
-מודול זה אחראי על קבלת קובץ PDF ורשימת טקסטים להשחרה,
+מודול זה אחראי על קבלת File PDF ורשימת טקסטים להשחרה,
 וביצוע השחרה פיזית (מלבן שחור ומחיקת הטקסט) בעזרת ספריית PyMuPDF.
 """
 
 import fitz  # PyMuPDF
+
+try:
+    from src.logger_config import get_logger, trace_execution
+except ImportError:
+    try:
+        from logger_config import get_logger, trace_execution
+    except ImportError:
+        def trace_execution(func): return func
 import io
 import logging
 from typing import List, Union, Optional
@@ -25,73 +33,75 @@ class PdfRedactor:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
+    @trace_execution
     def redact_pdf(self, pdf_data: Union[str, bytes], pii_texts: List[str], output_path: Optional[str] = None) -> Union[bytes, str, None]:
         """
         השחרת טקסטים רגישים בתוך ה-PDF.
-        
-        Args:
-            pdf_data: נתיב לקובץ ה-PDF או אובייקט bytes של הקובץ
-            pii_texts: רשימת מחרוזות רגישות להשחרה
-            output_path: נתיב לשמירת הקובץ המושחר (אופציונלי, אם לא סופק יוחזר אובייקט bytes)
-            
-        Returns:
-            נתיב הקובץ החדש (אם סופק output_path), 
-            או אובייקט bytes של הקובץ המושחר,
-            או None במקרה של שגיאה.
+        תומך בטקסט בעברית (RTL) על ידי חיפוש כפול (רגיל והפוך).
         """
         if not pii_texts:
-            self.logger.warning("⚠️ לא התקבלו טקסטים להשחרה, הפעולה מבוטלת.")
+            self.logger.warning("⚠️ No texts received for redaction, operation cancelled.")
             return None
 
         try:
-            # 1. טעינת הקובץ
             if isinstance(pdf_data, str):
                 doc = fitz.open(pdf_data)
             else:
                 doc = fitz.open("pdf", pdf_data)
                 
-            self.logger.info(f"🔒 מתחיל השחרת קובץ PDF. מספר מחרוזות PII להשחרה: {len(pii_texts)}")
+            self.logger.info(f"🔒 Starting redaction of PDF file. Number of PII strings: {len(pii_texts)}")
             
             total_redactions = 0
 
-            # 2. מעבר על כל עמוד במסמך
             for page in doc:
+                # קבלת כל המילים בעמוד פעם אחת לשיפור ביצועים ודיוק
+                words = page.get_text("words") # (x0, y0, x1, y1, word, block_no, line_no, word_no)
+                
                 for text in pii_texts:
-                    # חיפוש הטקסט בעמוד הנוכחי (מחזיר רשימה של מלבנים המקיפים את הטקסט)
+                    if not text.strip(): continue
+                    
+                    # 1. חיפוש סטנדרטי
                     text_instances = page.search_for(text)
                     
+                    # 2. אם לא נמצא, נסה חיפוש הפוך (עבור עברית RTL ב-PDF)
+                    if not text_instances and any(c in "אבגדהוזחטיכלמנסעפצקרשת" for c in text):
+                        reversed_text = text[::-1]
+                        text_instances = page.search_for(reversed_text)
+                    
+                    # 3. אם עדיין לא נמצא, נסה חיפוש מבוסס מילים (עבור מקרים של רווחים כפולים או תווים נסתרים)
+                    if not text_instances:
+                        # לוגיקה פשוטה לחיפוש רצף מילים
+                        pass # TODO: שיפור עתידי אם נדרש
+
                     for inst in text_instances:
-                        # הוספת "הערת השחרה" (מלבן אדום זמני שיהפוך לשחור מוחלט בהחלה)
-                        # fill=(0, 0, 0) קובע צבע מילוי שחור
                         page.add_redact_annot(inst, fill=(0, 0, 0))
                         total_redactions += 1
                 
-                # החלת כל הערות ההשחרה בעמוד (מוחק פיזית את הטקסט שמתחת ומצייר את המלבן)
                 page.apply_redactions()
 
-            self.logger.info(f"✅ השחרת PDF הסתיימה. בוצעו {total_redactions} השחרות במסמך.")
+            self.logger.info(f"✅ PDF redaction finished. Performed {total_redactions} redactions.")
 
-            # 3. שמירה וסיום
             if output_path:
                 doc.save(output_path)
                 doc.close()
-                return output_path
+                return output_path, total_redactions
             else:
                 redacted_bytes = doc.write()
                 doc.close()
-                return redacted_bytes
+                return redacted_bytes, total_redactions
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בהשחרת ה-PDF: {e}")
-            return None
+            self.logger.error(f"❌ Error redacting PDF: {e}")
+            return None, 0
 
+    @trace_execution
     def redact_pdf_by_coords(self, pdf_data: Union[str, bytes], findings: List[dict], output_path: Optional[str] = None) -> Union[bytes, str, None]:
         """
-        השחרת נתונים לפי קואורדינטות מדויקות (מלבנים בעמודים ספציפיים).
+        השחרת נתונים by coordinates מדויקות (מלבנים בעמודים ספציפיים).
         זה מאפשר השחרה זהה לזו של PDFShield.
         """
         if not findings:
-            self.logger.warning("⚠️ לא התקבלו מיקומים להשחרה, הפעולה מבוטלת.")
+            self.logger.warning("⚠️ No locations received for redaction, operation cancelled.")
             return None
 
         try:
@@ -100,7 +110,7 @@ class PdfRedactor:
             else:
                 doc = fitz.open("pdf", pdf_data)
                 
-            self.logger.info(f"🔒 מתחיל השחרת קובץ PDF לפי {len(findings)} קואורדינטות מדויקות.")
+            self.logger.info(f"🔒 Starting PDF redaction by {len(findings)} exact coordinates.")
             
             for finding in findings:
                 page_idx = finding.get('page', 0)
@@ -114,7 +124,7 @@ class PdfRedactor:
             for page in doc:
                 page.apply_redactions()
                 
-            self.logger.info("✅ השחרת PDF ויזואלית הסתיימה בהצלחה.")
+            self.logger.info("✅ Visual PDF redaction finished successfully.")
 
             if output_path:
                 doc.save(output_path)
@@ -130,6 +140,6 @@ class PdfRedactor:
                 return redacted_bytes
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בהשחרת ה-PDF לפי קואורדינטות: {e}")
+            self.logger.error(f"❌ Error redacting PDF by coordinates: {e}")
             return None
 

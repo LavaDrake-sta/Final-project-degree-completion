@@ -8,6 +8,14 @@ Excel Redactor - השחרת קבצי Excel
 import openpyxl
 from openpyxl.styles import PatternFill, Font
 import io
+
+try:
+    from src.logger_config import get_logger, trace_execution
+except ImportError:
+    try:
+        from logger_config import get_logger, trace_execution
+    except ImportError:
+        def trace_execution(func): return func
 import logging
 import random
 from typing import List, Union, Optional
@@ -15,8 +23,8 @@ from typing import List, Union, Optional
 class ExcelRedactor:
     """
     מחלקה האחראית על השחרת מידע רגיש מקבצי אקסל.
-    המחלקה מקבלת קובץ ורשימת טקסטים להסרה, משנה את הטקסט באופן בלתי הפיך ל-0 ול-1
-    ומייצרת קובץ אקסל חדש ובטוח.
+    המחלקה מקבלת File ורשימת טקסטים להסרה, משנה את הטקסט באופן בלתי הפיך ל-0 ול-1
+    ומייצרת File אקסל חדש ובטוח.
     """
 
     def __init__(self):
@@ -26,16 +34,18 @@ class ExcelRedactor:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
+    @trace_execution
     def _mask_text_binary(self, original_text: str) -> str:
         """מחליף כל תו בטקסט הרגיש ב-0 או 1 אקראיים כדי למנוע שחזור"""
         return "".join(random.choice(['0', '1']) for _ in original_text)
 
+    @trace_execution
     def redact_excel(self, excel_data: Union[str, bytes], pii_texts: List[str], output_path: Optional[str] = None) -> Union[bytes, str, bool]:
         """
-        השחרת נתונים רגישים מתוך קובץ Excel.
-        - excel_data: נתיב לקובץ מקור או נתוני bytes
+        השחרת נתונים רגישים מתוך File Excel.
+        - excel_data: נתיב לFile מקור או נתוני bytes
         - pii_texts: רשימה של מחרוזות (הטקסט של המידע הרגיש) שיש להשחיר
-        - output_path: נתיב לשמירת הקובץ. אם None, יוחזרו bytes.
+        - output_path: נתיב לשמירת הFile. אם None, יוחזרו bytes.
         """
         try:
             if isinstance(excel_data, str):
@@ -46,7 +56,7 @@ class ExcelRedactor:
             black_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
             black_font = Font(color="000000")
 
-            self.logger.info(f"🔒 מתחיל השחרת קובץ Excel. מספר מחרוזות PII להשחרה: {len(pii_texts)}")
+            self.logger.info(f"🔒 Starting Excel file redaction. Number of PII strings to redact: {len(pii_texts)}")
             redact_count = 0
 
             # מעבר על כל הגיליונות והתאים
@@ -54,8 +64,8 @@ class ExcelRedactor:
                 ws = wb[sheet_name]
                 for row in ws.iter_rows():
                     for cell in row:
-                        if cell.value and isinstance(cell.value, str):
-                            original_value = cell.value
+                            # טיפול בערכים שאינם מחרוזת (מספרים, תאריכים וכו')
+                            original_value = str(cell.value)
                             new_value = original_value
                             modified = False
                             
@@ -74,17 +84,17 @@ class ExcelRedactor:
                                 cell.fill = black_fill
                                 cell.font = black_font
 
-            self.logger.info(f"✅ סיום השחרה. {redact_count} חלקי מידע הופכו למחרוזת בינארית (0 ו-1).")
+            self.logger.info(f"✅ Finished redaction. {redact_count} pieces of information converted to binary string (0 and 1).")
 
-            # שמירת התוצאה - החזרת הקובץ למשתמש להורדה
+            # שמירת התוצאה - החזרת הFile למשתמש להורדה
             if output_path is not None:
                 wb.save(output_path)
-                return output_path
+                return output_path, redact_count
             else:
                 output = io.BytesIO()
                 wb.save(output)
-                return output.getvalue()
+                return output.getvalue(), redact_count
                 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בהשחרת Excel: {e}")
+            self.logger.error(f"❌ Error redacting Excel: {e}")
             return False

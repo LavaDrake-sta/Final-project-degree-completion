@@ -1,6 +1,11 @@
 import pytesseract
 from PIL import Image
 import io
+try:
+    from src.logger_config import trace_execution
+except ImportError:
+    def trace_execution(func): return func
+
 
 class OCRProcessor:
     """
@@ -15,6 +20,7 @@ class OCRProcessor:
         # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         self.lang = 'eng+heb'
 
+    @trace_execution
     def extract_from_path(self, file_path: str) -> str:
         """Extract text from an image file path."""
         try:
@@ -24,6 +30,7 @@ class OCRProcessor:
             print(f"OCR Error: {e}")
             return ""
 
+    @trace_execution
     def extract_from_bytes(self, image_bytes: bytes) -> str:
         """Extract text from image bytes."""
         try:
@@ -33,6 +40,7 @@ class OCRProcessor:
             print(f"OCR Error: {e}")
             return ""
 
+    @trace_execution
     def extract_from_image_obj(self, image: Image.Image) -> str:
         """Extract text from a PIL Image object."""
         try:

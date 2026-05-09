@@ -15,14 +15,15 @@ from typing import Dict, Tuple, Optional
 import logging
 
 try:
-    from src.logger_config import get_logger
+    from src.logger_config import get_logger, trace_execution
 except ImportError:
     try:
-        from logger_config import get_logger
+        from logger_config import get_logger, trace_execution
     except ImportError:
         def get_logger(name):
             logging.basicConfig(level=logging.INFO)
             return logging.getLogger(name)
+        def trace_execution(func): return func
 
 # הגדרת Tesseract לWindows
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -36,7 +37,7 @@ class ImageProcessor:
     def __init__(self):
         """אתחול המעבד"""
         self.logger = get_logger("PII.Processor.Image")
-        self.logger.info("🔧 אתחול ImageProcessor...")
+        self.logger.info("🔧 Initializing ImageProcessor...")
 
         # OCR configs בסדר עדיפות: עברי+אנגלי → עברי → אנגלי → ברירת מחדל
         self.tesseract_configs = [
@@ -51,10 +52,11 @@ class ImageProcessor:
         # בדיקה שTesseract מותקן
         try:
             pytesseract.get_tesseract_version()
-            self.logger.info("✅ Tesseract מותקן ופועל")
+            self.logger.info("✅ Tesseract installed and running")
         except Exception as e:
-            self.logger.error(f"❌ בעיה עם Tesseract: {e}")
+            self.logger.error(f"❌ Problem with Tesseract: {e}")
 
+    @trace_execution
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
         """עיבוד מקדים פשוט של התמונה"""
         try:
@@ -84,9 +86,10 @@ class ImageProcessor:
             return binary
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בעיבוד מקדים: {e}")
+            self.logger.error(f"❌ Error in preprocessing: {e}")
             return image
 
+    @trace_execution
     def extract_text_from_image(self, image_data, filename: str = "") -> Dict:
         """חילוץ טקסט מתמונה"""
         try:
@@ -105,7 +108,7 @@ class ImageProcessor:
             processed_image = self.preprocess_image(cv_image)
 
             # OCR עם הגדרות שונות
-            self.logger.info("🔍 מתחיל OCR...")
+            self.logger.info("🔍 Starting OCR...")
 
 
             best_text = ""
@@ -132,11 +135,11 @@ class ImageProcessor:
                         len(text.strip()) > 2):
                         best_text = text
                         best_confidence = avg_confidence
-                        self.logger.info(f"✅ OCR הצליח עם: {config[:20]}...")
+                        self.logger.info(f"✅ OCR succeeded with: {config[:20]}...")
                         break  # אם מצאנו תוצאה טובה, נעצור
 
                 except Exception as e:
-                    self.logger.warning(f"OCR config נכשל: {e}")
+                    self.logger.warning(f"OCR config failed: {e}")
                     continue
 
             # ניקוי הטקסט
@@ -152,11 +155,11 @@ class ImageProcessor:
                 'word_count': len(cleaned_text.split()) if cleaned_text else 0
             }
 
-            self.logger.info(f"✅ OCR הושלם: {len(cleaned_text)} תווים, ודאות: {best_confidence:.1f}%")
+            self.logger.info(f"✅ OCR finished: {len(cleaned_text)} characters, confidence: {best_confidence:.1f}%")
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בחילוץ טקסט: {e}")
+            self.logger.error(f"❌ Error extracting text: {e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -165,6 +168,7 @@ class ImageProcessor:
                 'filename': filename
             }
 
+    @trace_execution
     def clean_extracted_text(self, text: str) -> str:
         """ניקוי הטקסט שחולץ מOCR"""
         if not text:
@@ -189,7 +193,7 @@ def supported_image_formats():
     return ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp']
 
 def is_image_file(filename: str) -> bool:
-    """בדיקה אם הקובץ הוא תמונה"""
+    """בדיקה אם הFile הוא תמונה"""
     if not filename:
         return False
 

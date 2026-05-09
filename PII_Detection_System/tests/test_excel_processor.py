@@ -7,7 +7,7 @@ from src.processors.Excel_Processor import ExcelProcessor
 
 def make_test_excel_bytes() -> bytes:
     """
-    יוצר קובץ Excel (xlsx) בזיכרון עם 2 גיליונות וערכים 'אמיתיים' לבדיקה.
+    יוצר File Excel (xlsx) בזיכרון עם 2 sheets וערכים 'אמיתיים' לבדיקה.
     """
     buf = io.BytesIO()
 
@@ -41,7 +41,7 @@ def test_analyze_excel_structure_bytes():
     assert isinstance(result, dict)
     assert "sheets" in result or len(result) > 0  # תלוי איך בנית את ה-dict בפונקציה שלך
 
-    # אם אצלך המפתחות הם שמות גיליונות:
+    # אם אצלך המפתחות הם שמות sheets:
     assert "Employees" in result
     assert "Meta" in result
 
@@ -54,7 +54,7 @@ def test_get_excel_info_bytes():
 
     assert isinstance(info, dict)
     # בדיקות שמצופות בקונבנציה שלך — תתאים לפי הפלט אצלך:
-    # למשל: מספר גיליונות, שמות גיליונות, גודל, וכו'
+    # למשל: מספר sheets, שמות sheets, גודל, וכו'
     # לדוגמה:
     if "sheet_names" in info:
         assert "Employees" in info["sheet_names"]

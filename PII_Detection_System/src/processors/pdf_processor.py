@@ -16,14 +16,16 @@ from typing import Dict, List, Optional, Union
 import os
 
 try:
-    from src.logger_config import get_logger
+    from src.logger_config import get_logger, trace_execution, log_progress
 except ImportError:
     try:
-        from logger_config import get_logger
+        from logger_config import get_logger, trace_execution, log_progress
     except ImportError:
         def get_logger(name):
             logging.basicConfig(level=logging.INFO)
             return logging.getLogger(name)
+        def trace_execution(func): return func
+        def log_progress(c, t, n): pass
 
 
 
@@ -44,19 +46,20 @@ class PDFProcessor:
     def __init__(self):
         """אתחול המעבד"""
         self.logger = get_logger("PII.Processor.PDF")
-        self.logger.info("🔧 אתחול PDFProcessor...")
+        self.logger.info("🔧 Initializing PDFProcessor...")
 
         try:
             from .image_processor import ImageProcessor
             self.image_processor = ImageProcessor()
             self.ocr_available = True
-            self.logger.info("✅ OCR זמין למסמכים סרוקים")
+            self.logger.info("✅ OCR available for scanned documents")
         except ImportError:
             self.image_processor = None
             self.ocr_available = False
-            self.logger.warning("⚠️ OCR לא זמין - רק PDF עם טקסט")
+            self.logger.warning("⚠️ OCR not available - text PDF only")
 
 
+    @trace_execution
     def extract_text_from_pdf(self, pdf_data: Union[str, bytes],
                               filename: str = "") -> Dict:
         """
@@ -69,7 +72,7 @@ class PDFProcessor:
             if result['success'] and len(result['text'].strip()) > 50:
                 return result
 
-            self.logger.info("💡 מנסה שיטה חלופית...")
+            self.logger.info("💡 Trying alternative method...")
 
             # אם לא הצליח, נסה עם PyPDF2
             fallback_result = self._extract_with_pypdf2(pdf_data, filename)
@@ -82,7 +85,7 @@ class PDFProcessor:
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה כללית בעיבוד PDF: {e}")
+            self.logger.error(f"❌ General error in PDF processing: {e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -92,6 +95,7 @@ class PDFProcessor:
                 'method': 'none'
             }
 
+    @trace_execution
     def _extract_with_pymupdf(self, pdf_data: Union[str, bytes],
                               filename: str) -> Dict:
         """
@@ -100,7 +104,7 @@ class PDFProcessor:
         try:
             # פתיחת המסמך
             if isinstance(pdf_data, str):
-                # נתיב לקובץ
+                # נתיב לFile
                 doc = fitz.open(pdf_data)
             elif isinstance(pdf_data, bytes):
                 # נתוני bytes
@@ -121,9 +125,10 @@ class PDFProcessor:
             native_text_chars = 0
             ocr_text_chars = 0
 
-            self.logger.info(f"📄 עיבוד PDF: {doc.page_count} עמודים, נוצר מ-Word: {is_from_word}")
+            self.logger.info(f"📄 Processing PDF: {doc.page_count} pages, created from Word: {is_from_word}")
 
             for page_num in range(doc.page_count):
+                log_progress(page_num + 1, doc.page_count, "Scanning PDF pages")
                 page = doc[page_num]
 
                 # נסה לחלץ טקסט רגיל
@@ -132,7 +137,7 @@ class PDFProcessor:
 
                 # אם אין טקסט כלל (מסמך סרוק לחלוטין), נסה OCR על כל העמוד
                 if len(page_text.strip()) < 10 and self.ocr_available:
-                    self.logger.info(f"🔍 עמוד {page_num + 1}: אין טקסט - מנסה OCR על העמוד")
+                    self.logger.info(f"🔍 Page {page_num + 1}: No text - trying OCR on page")
                     ocr_text = self._ocr_pdf_page(page)
                     if ocr_text:
                         page_text = ocr_text
@@ -147,7 +152,7 @@ class PDFProcessor:
                         images_processed += 1
 
                 page_texts.append(page_text)
-                extracted_text += f"\n--- עמוד {page_num + 1} ---\n{page_text}\n"
+                extracted_text += f"\n--- Page {page_num + 1} ---\n{page_text}\n"
 
             doc.close()
 
@@ -165,7 +170,7 @@ class PDFProcessor:
             else:
                 if native_text_chars < 50 and ocr_text_chars > 0:
                     pdf_type = "scanned"
-                    pdf_type_desc = "מסמך סרוק (עבר זיהוי תווים - OCR)"
+                    pdf_type_desc = "מסמך סרוק (עבר זיהוי characters - OCR)"
                 elif native_text_chars >= 50 and ocr_text_chars > 0:
                     pdf_type = "mixed"
                     pdf_type_desc = "מסמך מעורב (טקסט מקורי + תמונות שעברו סריקה)"
@@ -174,7 +179,7 @@ class PDFProcessor:
                     pdf_type_desc = "מסמך PDF רגיל (טקסט מקורי)"
                 else:
                     pdf_type = "unknown"
-                    pdf_type_desc = "סוג מסמך לא ידוע"
+                    pdf_type_desc = "סוג מסמך unknown"
 
             result = {
                 'success': True,
@@ -191,15 +196,15 @@ class PDFProcessor:
                 'is_from_word': is_from_word
             }
 
-            self.logger.info(f"✅ PyMuPDF: {len(cleaned_text)} תווים מ-{len(page_texts)} עמודים")
+            self.logger.info(f"✅ PyMuPDF: {len(cleaned_text)} characters from {len(page_texts)} pages")
 
             if images_processed > 0:
-                self.logger.info(f"🖼️ OCR בוצע על {images_processed} עמודים")
+                self.logger.info(f"🖼️ OCR performed on {images_processed} pages")
 
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה ב-PyMuPDF: {e}")
+            self.logger.error(f"❌ Error in PyMuPDF: {e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -209,6 +214,7 @@ class PDFProcessor:
                 'method': 'pymupdf'
             }
 
+    @trace_execution
     def _extract_with_pypdf2(self, pdf_data: Union[str, bytes],
                              filename: str) -> Dict:
         """
@@ -216,7 +222,7 @@ class PDFProcessor:
         """
         try:
             if isinstance(pdf_data, str):
-                # נתיב לקובץ
+                # נתיב לFile
                 with open(pdf_data, 'rb') as file:
                     pdf_reader = PyPDF2.PdfReader(file)
                     pages_text = self._read_pages_pypdf2(pdf_reader)
@@ -241,11 +247,11 @@ class PDFProcessor:
                 'word_count': len(cleaned_text.split()) if cleaned_text else 0
             }
 
-            self.logger.info(f"✅ PyPDF2: {len(cleaned_text)} תווים מ-{len(pages_text)} עמודים")
+            self.logger.info(f"✅ PyPDF2: {len(cleaned_text)} characters from {len(pages_text)} pages")
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה ב-PyPDF2: {e}")
+            self.logger.error(f"❌ Error in PyPDF2: {e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -256,29 +262,31 @@ class PDFProcessor:
             }
 
     def _read_pages_pypdf2(self, pdf_reader) -> List[str]:
-        """קריאת עמודים עם PyPDF2"""
+        """קריאת pages עם PyPDF2"""
         pages_text = []
 
         for page_num, page in enumerate(pdf_reader.pages):
+            log_progress(page_num + 1, len(pdf_reader.pages), "Reading PyPDF2")
             try:
                 page_text = page.extract_text()
                 pages_text.append(page_text)
             except Exception as e:
-                self.logger.warning(f"⚠️ בעיה בעמוד {page_num + 1}: {e}")
+                self.logger.warning(f"⚠️ Issue in page {page_num + 1}: {e}")
                 pages_text.append("")
 
         return pages_text
 
+    @trace_execution
     def _ocr_pdf_page(self, page) -> str:
         """
-        OCR לעמוד PDF סרוק — מנסה configs עברי+אנגלי.
+        OCR לPage PDF סרוק — מנסה configs עברי+אנגלי.
         """
         try:
             if not self.ocr_available:
                 return ""
 
             import pytesseract
-            # המרת עמוד לתמונה ברזולוציה גבוהה
+            # המרת Page לתמונה ברזולוציה גבוהה
             pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
             img_data = pix.tobytes("png")
 
@@ -291,12 +299,12 @@ class PDFProcessor:
                     text = pytesseract.image_to_string(pil_img, config=config)
                     if text.strip():
                         self.logger.info(
-                            f"✅ OCR עמוד הצליח עם config: {config[:30]} | "
-                            f"{len(text)} תווים"
+                            f"✅ OCR Page הצליח עם config: {config[:30]} | "
+                            f"{len(text)} characters"
                         )
                         return text
                 except Exception as e:
-                    self.logger.debug(f"  OCR config נכשל ({config[:20]}): {e}")
+                    self.logger.debug(f"  OCR config failed ({config[:20]}): {e}")
                     continue
 
             # fallback: image_processor
@@ -304,19 +312,20 @@ class PDFProcessor:
                 img_data, filename="pdf_page"
             )
             if ocr_result['success']:
-                self.logger.info(f"✅ OCR fallback הצליח: {len(ocr_result['text'])} תווים")
+                self.logger.info(f"✅ OCR fallback successful: {len(ocr_result['text'])} characters")
                 return ocr_result['text']
             else:
-                self.logger.warning(f"⚠️ OCR נכשל: {ocr_result.get('error', 'לא ידוע')}")
+                self.logger.warning(f"⚠️ OCR failed: {ocr_result.get('error', 'unknown')}")
                 return ""
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה ב-OCR של עמוד: {e}")
+            self.logger.error(f"❌ Error in page OCR: {e}")
             return ""
 
+    @trace_execution
     def _extract_text_from_embedded_images(self, page, page_num: int) -> str:
         """
-        חילוץ טקסט מתמונות מוטבעות בתוך עמוד PDF שכבר מכיל טקסט.
+        חילוץ טקסט מתמונות מוטבעות בתוך Page PDF שכבר מכיל טקסט.
         מטפל במקרה של PDF שמכיל תמונה מוסרקת בתוכו (לא PDF סרוק לחלוטין).
         """
         if not self.ocr_available:
@@ -332,7 +341,7 @@ class PDFProcessor:
                 return ""
 
             self.logger.info(
-                f"🖼️ עמוד {page_num + 1}: נמצאו {len(image_list)} תמונות מוטבעות - מנסה OCR"
+                f"🖼️ Page {page_num + 1}: Found {len(image_list)} תמונות מוטבעות - מנסה OCR"
             )
 
             doc = page.parent  # הפניה למסמך
@@ -368,22 +377,22 @@ class PDFProcessor:
                     if ocr_result['success'] and len(ocr_result['text'].strip()) > 5:
                         ocr_texts.append(ocr_result['text'].strip())
                         self.logger.info(
-                            f"  ↳ ✅ OCR הצליח: {len(ocr_result['text'])} תווים"
+                            f"  ↳ ✅ OCR הצליח: {len(ocr_result['text'])} characters"
                         )
                     else:
-                        self.logger.debug(f"  ↳ OCR לא מצא טקסט בתמונה {img_index + 1}")
+                        self.logger.debug(f"  ↳ OCR found no text in image {img_index + 1}")
 
                 except Exception as e:
-                    self.logger.warning(f"  ↳ ⚠️ שגיאה בעיבוד תמונה {img_index + 1}: {e}")
+                    self.logger.warning(f"  ↳ ⚠️ Error processing image {img_index + 1}: {e}")
                     continue
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בחילוץ תמונות מוטבעות מעמוד {page_num + 1}: {e}")
+            self.logger.error(f"❌ Error extracting embedded images from Page {page_num + 1}: {e}")
 
         if ocr_texts:
             combined = "\n".join(ocr_texts)
             self.logger.info(
-                f"✅ עמוד {page_num + 1}: חולץ טקסט מ-{len(ocr_texts)} תמונות מוטבעות"
+                f"✅ Page {page_num + 1}: חולץ טקסט מ-{len(ocr_texts)} תמונות מוטבעות"
             )
             return combined
 
@@ -413,9 +422,10 @@ class PDFProcessor:
 
         return text.strip()
 
+    @trace_execution
     def get_pdf_info(self, pdf_data: Union[str, bytes]) -> Dict:
         """
-        קבלת מידע על קובץ PDF
+        קבלת מידע על File PDF
         """
         try:
             if isinstance(pdf_data, str):
@@ -442,13 +452,13 @@ class PDFProcessor:
             return info
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בקבלת מידע PDF: {e}")
+            self.logger.error(f"❌ Error getting PDF info: {e}")
             return {}
 
 
 # פונקציות עזר
 def is_pdf_file(filename: str) -> bool:
-    """בדיקה אם הקובץ הוא PDF"""
+    """בדיקה אם הFile הוא PDF"""
     if not filename:
         return False
     return filename.lower().endswith('.pdf')
@@ -481,24 +491,24 @@ if __name__ == "__main__":
     if os.path.exists(test_pdf_path):
         print(f"📄 בודק PDF: {test_pdf_path}")
 
-        # מידע על הקובץ
+        # מידע על הFile
         info = processor.get_pdf_info(test_pdf_path)
-        print(f"📊 {info.get('pages', 0)} עמודים")
+        print(f"📊 {info.get('pages', 0)} pages")
 
         # חילוץ טקסט
         result = processor.extract_text_from_pdf(test_pdf_path)
 
         if result['success']:
-            print(f"✅ הצלחה! חולץ {len(result['text'])} תווים")
+            print(f"✅ הצלחה! חולץ {len(result['text'])} characters")
             print(f"📖 שיטה: {result['method']}")
             if result.get('ocr_pages', 0) > 0:
-                print(f"🖼️ OCR: {result['ocr_pages']} עמודים")
+                print(f"🖼️ OCR: {result['ocr_pages']} pages")
 
             if result['text']:
                 print(f"📝 דוגמה: {result['text'][:150]}...")
         else:
             print(f"❌ שגיאה: {result['error']}")
     else:
-        print("💡 לבדיקה, שים קובץ PDF בשם 'test_document.pdf' בתיקייה")
+        print("💡 לבדיקה, שים File PDF בשם 'test_document.pdf' בתיקייה")
 
     print("\n✅ מעבד PDF מוכן לשימוש!")

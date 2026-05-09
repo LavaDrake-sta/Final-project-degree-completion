@@ -16,15 +16,16 @@ from dataclasses import dataclass
 from enum import Enum
 
 try:
-    from src.logger_config import get_logger
+    from src.logger_config import get_logger, trace_execution
 except ImportError:
     try:
-        from logger_config import get_logger
+        from logger_config import get_logger, trace_execution
     except ImportError:
         import logging
         def get_logger(name):
             logging.basicConfig(level=logging.INFO)
             return logging.getLogger(name)
+        def trace_execution(func): return func
 
 logger = get_logger("PII.BasicDetector")
 
@@ -110,7 +111,7 @@ class BasicPIIDetector:
 
     def __init__(self):
         """אתחול המזהה עם כל הדפוסים והחוקים"""
-        logger.info("🔧 אתחול BasicPIIDetector...")
+        logger.info("🔧 Initializing BasicPIIDetector...")
 
         # ─── תבניות Regex ─────────────────────────────────────────
         self.patterns = {
@@ -125,7 +126,7 @@ class BasicPIIDetector:
                 'description': 'מספר אישי צבאי'
             },
             'phone_number': {
-                'pattern': r'\b0\d{1,2}-?\d{7,8}\b',
+                'pattern': r'\b(?:\+972[- ]?|0)([23489]|[57]\d)[- ]?\d{3}[- ]?\d{4}\b|\b(?:\+972|0)[- ]?\d[\d\-\s\–]{7,15}\b',
                 'sensitivity': SensitivityLevel.HIGH,
                 'description': 'מספר טלפון ישראלי'
             },
@@ -173,7 +174,7 @@ class BasicPIIDetector:
 
         # ─── מילות מפתח → זיהוי ערך שאחריהן ─────────────────────
         # פורמט: (keyword_pattern, entity_category, sensitivity, value_pattern)
-        # value_pattern מוצא את הערך שבא מיד אחרי מילת המפתח
+        # value_pattern מוצא את הערך שבא מיד after מילת המפתח
         self.context_keywords = [
             # זיהוי
             (r'(?:תעודת\s+זהות|ת\.?ז\.?|מספר\s+זהות|מס[\'"]?\s*זהות)',
@@ -182,7 +183,7 @@ class BasicPIIDetector:
             # טלפון
             (r'(?:טל(?:פון)?\'?|נייד|פלאפון|סלולרי|טל\.)',
              'context_phone', SensitivityLevel.HIGH,
-             r'[\s:]*(\d[\d\-\s]{7,12})'),
+             r'[\s:]*(\+?\d[\d\-\s\.\–]{7,20})'),
             # שם
             (r'(?:שם\s+(?:פרטי|משפחה|מלא|האב|אב|האם|אם)|שמו|שמה)',
              'context_name', SensitivityLevel.HIGH,
@@ -315,9 +316,10 @@ class BasicPIIDetector:
             }
         }
 
-        logger.info("✅ BasicPIIDetector מוכן")
+        logger.info("✅ BasicPIIDetector ready")
 
     # ─── זיהוי תבניות Regex ────────────────────────────────────────
+    @trace_execution
     def detect_patterns(self, text: str) -> List[PIIMatch]:
         """זיהוי דפוסים באמצעות ביטויים רגולריים"""
         matches = []
@@ -333,11 +335,12 @@ class BasicPIIDetector:
                         sensitivity=pattern_info['sensitivity']
                     ))
             except Exception as e:
-                logger.warning(f"שגיאה בזיהוי דפוס {category}: {e}")
-        logger.debug(f"🔍 נמצאו {len(matches)} ממצאי Regex (לפני dedup)")
+                logger.warning(f"Error detecting pattern {category}: {e}")
+        logger.debug(f"🔍 Found {len(matches)} Regex findings (before dedup)")
         return matches
 
     # ─── זיהוי Context Keywords ────────────────────────────────────
+    @trace_execution
     def detect_context_keywords(self, text: str) -> List[PIIMatch]:
         """
         מחפש מילות מפתח כמו 'תעודת זהות:' ותופס את הערך שאחריהן.
@@ -363,11 +366,12 @@ class BasicPIIDetector:
                         sensitivity=sensitivity
                     ))
             except Exception as e:
-                logger.warning(f"שגיאה ב-context keyword {category}: {e}")
-        logger.debug(f"🔑 נמצאו {len(matches)} ממצאי Context")
+                logger.warning(f"Error in context keyword {category}: {e}")
+        logger.debug(f"🔑 Found {len(matches)} Context findings")
         return matches
 
     # ─── זיהוי מילות מפתח כלליות ──────────────────────────────────
+    @trace_execution
     def detect_keywords(self, text: str) -> List[PIIMatch]:
         """זיהוי מילות מפתח רגישות (הקשר בלבד)"""
         matches = []
@@ -392,6 +396,7 @@ class BasicPIIDetector:
 
     # ─── Span-based Dedup ──────────────────────────────────────────
     @staticmethod
+    @trace_execution
     def _span_dedup(matches: List[PIIMatch]) -> List[PIIMatch]:
         """
         מסיר כפילויות לפי מיקום (start, end).
@@ -428,6 +433,7 @@ class BasicPIIDetector:
         return result
 
     # ─── ניתוח ראשי ────────────────────────────────────────────────
+    @trace_execution
     def analyze_text(self, text: str) -> Dict:
         """ניתוח טקסט מלא — פונקציה ראשית"""
         if not text or not text.strip():
@@ -438,25 +444,25 @@ class BasicPIIDetector:
                 'summary': "לא הוזן טקסט לבדיקה"
             }
 
-        logger.info(f"🔍 מתחיל ניתוח PII | {len(text)} תווים")
+        logger.info(f"🔍 Starting PII analysis | {len(text)} characters")
         try:
             # זיהוי דפוסים וערכי הקשר בלבד (מבטלים את השחרת מילות המפתח הכלליות כדי למנוע השחרת מילים כמו "ת.ז" או "אשראי")
             pattern_matches  = self.detect_patterns(text)
             context_matches  = self.detect_context_keywords(text)
             keyword_matches  = self.detect_keywords(text)
 
-            # איחוד הממצאים הפיזיים בלבד (דפוסים והקשרים מדויקים)
+            # איחוד הfindings הפיזיים בלבד (דפוסים והקשרים מדויקים)
             all_matches = pattern_matches + context_matches
 
             # Span-based dedup
             unique_matches = self._span_dedup(all_matches)
 
             logger.info(
-                f"✅ זיהוי הושלם | "
+                f"✅ Detection finished | "
                 f"Regex={len(pattern_matches)}, "
                 f"Context={len(context_matches)}, "
                 f"Keywords={len(keyword_matches)} → "
-                f"ייחודי={len(unique_matches)}"
+                f"unique={len(unique_matches)}"
             )
 
             # רמת רגישות כללית
@@ -476,30 +482,30 @@ class BasicPIIDetector:
             }
 
         except Exception as e:
-            logger.error(f"❌ שגיאה בניתוח הטקסט: {e}", exc_info=True)
+            logger.error(f"❌ Error analyzing text: {e}", exc_info=True)
             return {
                 'matches': [],
                 'total_matches': 0,
                 'overall_sensitivity': SensitivityLevel.LOW,
-                'summary': f"שגיאה בניתוח הטקסט: {str(e)}",
+                'summary': f"Error analyzing text: {str(e)}",
                 'error': str(e)
             }
 
     def _generate_summary(self, matches: List[PIIMatch]) -> str:
-        """יצירת סיכום הממצאים"""
+        """יצירת סיכום הfindings"""
         if not matches:
-            return "✅ לא נמצא מידע רגיש בטקסט"
+            return "✅ No sensitive information found in text"
         critical = sum(1 for m in matches if m.sensitivity == SensitivityLevel.CRITICAL)
         high     = sum(1 for m in matches if m.sensitivity == SensitivityLevel.HIGH)
-        summary  = f"⚠️ נמצאו {len(matches)} פריטי מידע רגיש"
+        summary  = f"⚠️ Found {len(matches)} sensitive info items"
         if critical:
-            summary += f" (כולל {critical} קריטיים)"
+            summary += f" (including {critical} critical)"
         elif high:
-            summary += f" (כולל {high} ברמה גבוהה)"
+            summary += f" (including {high} high level)"
         return summary
 
     def get_statistics(self, matches: List[PIIMatch]) -> Dict:
-        """סטטיסטיקות מפורטות על הממצאים"""
+        """סטטיסטיקות מפורטות על הfindings"""
         if not matches:
             return {}
         stats = {'by_sensitivity': {}, 'by_category': {}, 'confidence_avg': 0}

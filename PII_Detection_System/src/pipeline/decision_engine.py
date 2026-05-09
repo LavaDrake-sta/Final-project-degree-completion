@@ -18,6 +18,15 @@ except ImportError:
         def get_logger(name):
             logging.basicConfig(level=logging.INFO)
             return logging.getLogger(name)
+        def trace_execution(func): return func
+
+try:
+    from src.logger_config import trace_execution
+except ImportError:
+    try:
+        from logger_config import trace_execution
+    except ImportError:
+        def trace_execution(func): return func
 
 logger = get_logger("PII.Pipeline.Decision")
 
@@ -100,11 +109,12 @@ class DecisionEngine:
     }
 
     def __init__(self):
-        logger.info("🔧 DecisionEngine מוכן")
+        logger.info("🔧 DecisionEngine ready")
 
     def translate_entity(self, entity_type: str) -> str:
         return self.ENTITY_HEBREW.get(entity_type, entity_type)
 
+    @trace_execution
     def evaluate(self, entities: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         מעריך את רשימת הישויות ומחזיר רמת סיכון וסיכום.
@@ -133,12 +143,12 @@ class DecisionEngine:
             )
         elif total_count >= 3:
             risk_level = self.RISK_UNSAFE
-            summary    = f"🚨 זוהה נפח גבוה ({total_count}) של פריטי מידע רגיש."
+            summary    = f"🚨 זוהה נפח גבוה ({total_count}) של sensitive info items."
         else:
             risk_level = self.RISK_WARNING
             summary    = f"⚠️ זוהו {total_count} פריטי מידע ברמת רגישות בינונית."
 
-        logger.info(f"⚠️ סיכון: {risk_level} | {summary}")
+        logger.info(f"⚠️ Risk: {risk_level} | {summary}")
 
         return {
             "risk_level":     risk_level,

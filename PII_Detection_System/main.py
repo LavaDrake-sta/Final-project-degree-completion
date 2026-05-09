@@ -33,7 +33,7 @@ def main():
 
     except ImportError as e:
         print(f"❌ שגיאה בטעינת המודול: {e}")
-        print("💡 פתרון: בדוק שהקובץ basic_detector.py נמצא בתיקייה src/detectors/")
+        print("💡 פתרון: בדוק שהFile basic_detector.py נמצא בתיקייה src/detectors/")
         return
     except Exception as e:
         print(f"❌ שגיאה כללית: {e}")
@@ -74,10 +74,10 @@ def run_demo():
             print(f"   תוצאה: {results['summary']}")
             print(f"   רגישות: {results['overall_sensitivity'].name}")
 
-            # הצגת פירוט הממצאים
+            # הצגת פירוט הfindings
             if results['matches']:
                 for match in results['matches']:
-                    print(f"   🔍 נמצא: '{match.text}' (סוג: {match.category})")
+                    print(f"   🔍 נמצא: '{match.text}' (Type: {match.category})")
 
     except Exception as e:
         print(f"❌ שגיאה בדמו: {e}")

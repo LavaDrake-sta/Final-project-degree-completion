@@ -1,78 +1,89 @@
 # PII Detection System - Requirements
-# פרויקט גמר - זיהוי מידע אישי רגיש
+# Final Project - Personal Identifiable Information (PII) Detection & Redaction
 
 # ===============================
-# חבילות בסיסיות
+# Core Data Processing
 # ===============================
-numpy>=1.21.0
-pandas>=1.3.0
-matplotlib>=3.4.0
-seaborn>=0.11.0
+numpy==2.2.6
+pandas==2.3.3
+matplotlib==3.10.8
+seaborn==0.13.2
+scipy==1.16.3
+scikit-learn==1.8.0
 
 # ===============================
-# עיבוד טקסט
+# Text Processing & NLP
 # ===============================
-nltk>=3.6.0
-spacy>=3.4.0
+nltk==3.9.2
+spacy==3.8.11
+presidio-analyzer==2.2.362
+presidio-anonymizer==2.2.362
+phonenumbers==9.0.28
 
 # ===============================
-# עיבוד תמונות ו-OCR
+# Image Processing & OCR (External Dependencies)
 # ===============================
-opencv-python>=4.5.0
-Pillow>=8.3.0
-pytesseract>=0.3.8
+opencv-python==4.12.0.88
+Pillow==12.1.0
+pytesseract==0.3.13
+easyocr==1.7.2
+python-bidi==0.6.9
+arabic-reshaper==3.0.1
 
 # ===============================
-# עיבוד מסמכים
+# Document Handling (Word, Excel, PDF)
 # ===============================
-python-docx>=0.8.11
-python-pptx>=0.6.21
-PyPDF2>=3.0.0
-pymupdf>=1.20.0
-openpyxl>=3.0.0
-xlrd>=2.0.0
+python-docx==1.2.0
+python-pptx==1.0.2
+PyPDF2==3.0.1
+pymupdf==1.26.7
+openpyxl==3.1.5
+xlrd==2.0.2
+xlsxwriter==3.2.9
+pdfminer.six==20251230
+pdfplumber==0.11.9
+lxml==6.0.2
 
 # ===============================
-# ממשק משתמש
+# User Interface (Streamlit)
 # ===============================
-streamlit>=1.12.0
-gradio>=3.1.0
+streamlit==1.52.2
+streamlit-drawable-canvas==0.9.3
+gradio==6.2.0
 
 # ===============================
-# עבור שלב ה-AI (בהמשך)
+# Artificial Intelligence (AI Pipeline)
 # ===============================
-torch>=1.12.0
-transformers>=4.21.0
-datasets>=2.4.0
-scikit-learn>=1.1.0
+torch==2.11.0
+torchvision==0.26.0
+transformers==4.57.3
+datasets==4.4.2
 
 # ===============================
-# כלי פיתוח
+# Development & Testing
 # ===============================
-pytest>=7.0.0
-black>=22.0.0
-flake8>=5.0.0
+pytest==9.0.2
+black==25.12.0
+flake8==7.3.0
 
-# ===============================
-# הוראות התקנה חשובות:
-# ===============================
+# ====================================================================
+# Installation and Execution Instructions:
+# ====================================================================
 # 
-# 1. התקנת Tesseract OCR:
-#    Windows: הורד מ- https://github.com/UB-Mannheim/tesseract/wiki
-#    Ubuntu: sudo apt install tesseract-ocr tesseract-ocr-heb
-#    MacOS: brew install tesseract tesseract-lang
+# 1. Install Tesseract OCR (Required for image text recognition):
+#    Windows: Download and install from https://github.com/UB-Mannheim/tesseract/wiki
+#    Ensure the TESSERACT_PATH variable in app.py matches your installation path.
 #
-# 2. התקנת חבילות Python:
+# 2. Install Python Packages:
+#    Open terminal in the project directory and run:
 #    pip install -r requirements.txt
 #
-
-# 3. בדיקת התקנה:
-#    python -c "import cv2, pytesseract; print('OCR מוכן!')"
+# 3. Download spaCy Language Model (Required for Presidio):
+#    python -m spacy download en_core_web_lg
 #
-
-# בדיקה על התיקייה הנכונה
-# cd PII_Decetion_System
-
-# 4. הפעלת המערכת:
-#    streamlit run src/ui/streamlit_app.py
-#
+# 4. Run the System:
+#    From the root directory:
+#    streamlit run PII_Detection_System/app.py
+#    streamlit run app.py
+# 
+# ====================================================================

@@ -82,7 +82,7 @@ class HebrewTextFixer:
     def improve_ocr_text(self, text: str) -> str:
         """שיפור טקסט שהתקבל מOCR"""
 
-        # תיקון תווים שגויים נפוצים
+        # תיקון characters שגויים נפוצים
         improved_text = text
 
         # תיקונים ספציפיים לעברית מOCR

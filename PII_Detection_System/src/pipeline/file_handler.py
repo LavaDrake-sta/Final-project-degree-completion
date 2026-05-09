@@ -1,6 +1,17 @@
 import os
 import io
 import mimetypes
+
+try:
+    from src.logger_config import get_logger, trace_execution
+except ImportError:
+    try:
+        from logger_config import get_logger, trace_execution
+    except ImportError:
+        def get_logger(name):
+            logging.basicConfig(level=logging.INFO)
+            return logging.getLogger(name)
+        def trace_execution(func): return func
 import pdfplumber
 import docx
 import openpyxl
@@ -38,6 +49,7 @@ class FileHandler:
                 return "image"
             return "unknown"
 
+    @trace_execution
     def process_file(self, file_path: str = None, file_bytes: bytes = None, filename: str = None) -> Dict[str, Any]:
         """Process the file and extract text and metadata."""
         file_type = self.detect_file_type(file_path, file_bytes, filename)
@@ -53,6 +65,7 @@ class FileHandler:
         else:
             return {"success": False, "error": f"Unsupported file type: {file_type}", "text": ""}
 
+    @trace_execution
     def _process_pdf(self, file_path: str = None, file_bytes: bytes = None) -> Dict[str, Any]:
         extracted_text = []
         is_scanned = False
@@ -86,6 +99,7 @@ class FileHandler:
         except Exception as e:
             return {"success": False, "error": str(e), "text": ""}
 
+    @trace_execution
     def _process_docx(self, file_path: str = None, file_bytes: bytes = None) -> Dict[str, Any]:
         try:
             if file_path:
@@ -98,6 +112,7 @@ class FileHandler:
         except Exception as e:
             return {"success": False, "error": str(e), "text": ""}
 
+    @trace_execution
     def _process_xlsx(self, file_path: str = None, file_bytes: bytes = None) -> Dict[str, Any]:
         try:
             if file_path:
@@ -117,6 +132,7 @@ class FileHandler:
         except Exception as e:
             return {"success": False, "error": str(e), "text": ""}
 
+    @trace_execution
     def _process_image(self, file_path: str = None, file_bytes: bytes = None) -> Dict[str, Any]:
         try:
             if file_path:

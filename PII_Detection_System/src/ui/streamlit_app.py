@@ -155,7 +155,7 @@ def show_results(results):
     count = results['total_matches']
     icon  = _ICONS.get(sens, '⚪')
 
-    msg = f"{icon} זוהו **{count}** פריטי מידע רגיש — חומרה: **{_HEB.get(sens, sens)}**"
+    msg = f"{icon} זוהו **{count}** sensitive info items — חומרה: **{_HEB.get(sens, sens)}**"
     if sens == 'CRITICAL':  st.error(f"🚨 {msg}")
     elif sens == 'HIGH':    st.warning(f"⚠️ {msg}")
     else:                   st.info(f"ℹ️ {msg}")
@@ -169,7 +169,7 @@ def show_results(results):
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=220)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("סה״כ ממצאים", count)
+    c1.metric("סה״כ findings", count)
     c2.metric("קריטיים 🔴", sum(1 for m in results['matches'] if m.sensitivity==SensitivityLevel.CRITICAL))
     c3.metric("גבוהים 🟠",   sum(1 for m in results['matches'] if m.sensitivity==SensitivityLevel.HIGH))
 
@@ -180,7 +180,7 @@ def show_results(results):
 st.markdown("""
 <div class="hero">
     <h1>🔒 מערכת זיהוי מידע אישי רגיש</h1>
-    <p>העלה כל קובץ — המערכת תחלץ טקסט ותזהה מידע רגיש אוטומטית</p>
+    <p>העלה כל File — המערכת תחלץ טקסט ותזהה מידע רגיש אוטומטית</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -243,7 +243,7 @@ with col_r:
                     st.code(ocr['text'][:600], language=None)
                 with st.spinner("מזהה מידע..."):
                     show_results(detector.analyze_text(ocr['text']))
-                st.caption(f"ודאות OCR: {ocr['confidence']:.1f}%  |  {len(ocr['text'])} תווים")
+                st.caption(f"ודאות OCR: {ocr['confidence']:.1f}%  |  {len(ocr['text'])} characters")
             else:
                 st.warning("לא נמצא טקסט בתמונה")
 
@@ -262,7 +262,7 @@ with col_p:
       <div class="card-accent acc-red"></div>
       <div class="card-head">
         <span class="icon">📄</span>
-        <div><h3>קובץ PDF</h3><p>טקסט רגיל · PDF סרוק · תמונות מוטבעות</p></div>
+        <div><h3>File PDF</h3><p>טקסט רגיל · PDF סרוק · תמונות מוטבעות</p></div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -274,9 +274,9 @@ with col_p:
             with st.spinner("מעבד PDF..."):
                 res = pdf_proc.extract_text_from_pdf(pdf_file.getvalue(), pdf_file.name)
             if res['success']:
-                parts = [f"{res['pages']} עמודים", f"{res['character_count']:,} תווים"]
+                parts = [f"{res['pages']} pages", f"{res['character_count']:,} characters"]
                 if res.get('ocr_pages', 0) > 0:
-                    parts.append(f"OCR: {res['ocr_pages']} עמודים/תמונות")
+                    parts.append(f"OCR: {res['ocr_pages']} pages/תמונות")
                 st.caption("  |  ".join(parts))
                 if res['text'].strip():
                     with st.expander("📝 תצוגה מקדימה"):
@@ -287,11 +287,11 @@ with col_p:
                         
                     if pii_res and pii_res.get('matches'):
                         pii_texts = [m.text for m in pii_res['matches']]
-                        with st.spinner("מייצר קובץ מושחר..."):
+                        with st.spinner("מייצר File מושחר..."):
                             redacted_bytes = redactor_pdf.redact_pdf(pdf_file.getvalue(), pii_texts)
                             if redacted_bytes:
                                 st.download_button(
-                                    label="📥 הורד קובץ PDF מושחר",
+                                    label="📥 הורד File PDF מושחר",
                                     data=redacted_bytes,
                                     file_name=f"redacted_{pdf_file.name}",
                                     mime="application/pdf"
@@ -299,7 +299,7 @@ with col_p:
                 else:
                     st.warning("לא נמצא טקסט ב-PDF")
             else:
-                st.error(f"שגיאה: {res.get('error','לא ידוע')}")
+                st.error(f"שגיאה: {res.get('error','unknown')}")
 
 # ────── WORD ──────────────────────────────────────────────────────────────
 with col_w:
@@ -308,7 +308,7 @@ with col_w:
       <div class="card-accent acc-blue"></div>
       <div class="card-head">
         <span class="icon">📘</span>
-        <div><h3>מסמך Word</h3><p>DOCX — פסקאות · טבלאות · כותרות</p></div>
+        <div><h3>מסמך Word</h3><p>DOCX — paragraphs · טבלאות · כותרות</p></div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -320,8 +320,8 @@ with col_w:
             with st.spinner("מעבד Word..."):
                 res = word_proc.extract_text_from_word(word_file.getvalue(), word_file.name)
             if res['success']:
-                parts = [f"{res['paragraphs']} פסקאות", f"{res['tables']} טבלאות",
-                         f"{res['character_count']:,} תווים"]
+                parts = [f"{res['paragraphs']} paragraphs", f"{res['tables']} טבלאות",
+                         f"{res['character_count']:,} characters"]
                 if res.get('has_images'):
                     parts.append(f"{res['image_count']} תמונות")
                 st.caption("  |  ".join(parts))
@@ -334,11 +334,11 @@ with col_w:
                         
                     if pii_res and pii_res.get('matches'):
                         pii_texts = [m.text for m in pii_res['matches']]
-                        with st.spinner("מייצר קובץ מושחר..."):
+                        with st.spinner("מייצר File מושחר..."):
                             redacted_bytes = redactor_word.redact_word(word_file.getvalue(), pii_texts)
                             if redacted_bytes:
                                 st.download_button(
-                                    label="📥 הורד קובץ Word מושחר",
+                                    label="📥 הורד File Word מושחר",
                                     data=redacted_bytes,
                                     file_name=f"redacted_{word_file.name}",
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -346,7 +346,7 @@ with col_w:
                 else:
                     st.warning("לא נמצא טקסט במסמך")
             else:
-                st.error(f"שגיאה: {res.get('error','לא ידוע')}")
+                st.error(f"שגיאה: {res.get('error','unknown')}")
 
 # ────── EXCEL ─────────────────────────────────────────────────────────────
 with col_e:
@@ -355,7 +355,7 @@ with col_e:
       <div class="card-accent acc-purple"></div>
       <div class="card-head">
         <span class="icon">📊</span>
-        <div><h3>קובץ Excel</h3><p>XLSX — גיליונות נתונים · טבלאות</p></div>
+        <div><h3>File Excel</h3><p>XLSX — sheets נתונים · טבלאות</p></div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -367,7 +367,7 @@ with col_e:
             with st.spinner("מעבד Excel..."):
                 res = excel_proc.extract_text_from_excel(excel_file.getvalue(), excel_file.name)
             if res['success']:
-                parts = [f"{res['sheet_count']} גיליונות", f"{res['character_count']:,} תווים"]
+                parts = [f"{res['sheet_count']} sheets", f"{res['character_count']:,} characters"]
                 st.caption("  |  ".join(parts))
                 if res['text'].strip():
                     with st.expander("📝 תצוגה מקדימה"):
@@ -378,11 +378,11 @@ with col_e:
                         
                     if pii_res and pii_res.get('matches'):
                         pii_texts = [m.text for m in pii_res['matches']]
-                        with st.spinner("מייצר קובץ מושחר..."):
+                        with st.spinner("מייצר File מושחר..."):
                             redacted_bytes = redactor_excel.redact_excel(excel_file.getvalue(), pii_texts)
                             if redacted_bytes:
                                 st.download_button(
-                                    label="📥 הורד קובץ Excel מושחר",
+                                    label="📥 הורד File Excel מושחר",
                                     data=redacted_bytes,
                                     file_name=f"redacted_{excel_file.name}",
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -390,7 +390,7 @@ with col_e:
                 else:
                     st.warning("לא נמצא טקסט במסמך")
             else:
-                st.error(f"שגיאה: {res.get('error','לא ידוע')}")
+                st.error(f"שגיאה: {res.get('error','unknown')}")
 
 
 # ════════════════════ FOOTER ═══════════════════════════════════════════════

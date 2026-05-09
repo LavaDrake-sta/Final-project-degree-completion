@@ -25,6 +25,15 @@ except ImportError:
         def get_logger(name):
             logging.basicConfig(level=logging.INFO)
             return logging.getLogger(name)
+        def trace_execution(func): return func
+
+try:
+    from src.logger_config import trace_execution
+except ImportError:
+    try:
+        from logger_config import trace_execution
+    except ImportError:
+        def trace_execution(func): return func
 
 logger = get_logger("PII.Pipeline.Main")
 
@@ -35,12 +44,13 @@ class PIIPipeline:
     """
 
     def __init__(self):
-        logger.info("🚀 אתחול PIIPipeline...")
+        logger.info("🚀 Initializing PIIPipeline...")
         self.file_handler   = FileHandler()
         self.detector       = PIIDetector()
         self.decision_engine = DecisionEngine()
-        logger.info("✅ PIIPipeline מוכן")
+        logger.info("✅ PIIPipeline ready")
 
+    @trace_execution
     def process_file(
         self,
         file_path: str = None,
@@ -48,9 +58,9 @@ class PIIPipeline:
         filename: str = None
     ) -> Dict[str, Any]:
         """
-        עיבוד קובץ: חילוץ טקסט → זיהוי PII → הערכת סיכון → אנונימיזציה.
+        עיבוד File: חילוץ טקסט → זיהוי PII → הערכת סיכון → אנונימיזציה.
         """
-        logger.info(f"📂 מתחיל עיבוד קובץ: {filename or file_path or 'bytes'}")
+        logger.info(f"📂 Starting processing file: {filename or file_path or 'bytes'}")
 
         # ── 1. חילוץ טקסט ─────────────────────────────────────────
         extraction_result = self.file_handler.process_file(
@@ -58,12 +68,12 @@ class PIIPipeline:
         )
         if not extraction_result["success"]:
             error_msg = extraction_result.get("error", "Failed to extract text.")
-            logger.error(f"❌ חילוץ טקסט נכשל: {error_msg}")
+            logger.error(f"❌ Text extraction failed: {error_msg}")
             return {"success": False, "error": error_msg}
 
         original_text = extraction_result["text"]
         file_type     = extraction_result.get("file_type", "unknown")
-        logger.info(f"📄 טקסט חולץ | {len(original_text)} תווים | סוג: {file_type}")
+        logger.info(f"📄 Text extracted | {len(original_text)} characters | Type: {file_type}")
 
         # ── 2. זיהוי PII (Presidio + Context) ────────────────────
         MIN_CONFIDENCE = 0.4
@@ -96,7 +106,7 @@ class PIIPipeline:
         all_entities = presidio_entities + context_entities
         extracted_entities = PIIDetector._overlap_dedup(all_entities)
 
-        logger.info(f"✅ לאחר dedup: {len(extracted_entities)} ישויות ייחודיות")
+        logger.info(f"✅ After dedup: {len(extracted_entities)} unique entities")
 
         # ── 4. שמור רק Presidio results תואמים לאנונימיזציה ───────
         keep_spans = {(e["start"], e["end"]) for e in extracted_entities if e.get("source") == "presidio"}
@@ -107,11 +117,11 @@ class PIIPipeline:
 
         # ── 5. הערכת סיכון ────────────────────────────────────────
         evaluation = self.decision_engine.evaluate(extracted_entities)
-        logger.info(f"⚠️ הערכת סיכון: {evaluation['risk_level']} | {evaluation['summary']}")
+        logger.info(f"⚠️ Risk assessment: {evaluation['risk_level']} | {evaluation['summary']}")
 
         # ── 6. אנונימיזציה ────────────────────────────────────────
         anonymized_text = self.detector.anonymize(original_text, analyzer_results_filtered)
-        logger.info(f"🔒 אנונימיזציה הושלמה | {len(anonymized_text)} תווים")
+        logger.info(f"🔒 Anonymization completed | {len(anonymized_text)} characters")
 
         # ── 7. דוח סופי ──────────────────────────────────────────
         report = {
@@ -124,6 +134,7 @@ class PIIPipeline:
         }
         return report
 
+    @trace_execution
     def generate_report_json(self, report: Dict[str, Any]) -> str:
         """ייצוא דוח כ-JSON"""
         return json.dumps(report, indent=2, ensure_ascii=False)

@@ -12,6 +12,14 @@ import io
 import logging
 from typing import List, Union, Optional
 
+try:
+    from src.logger_config import get_logger, trace_execution
+except ImportError:
+    try:
+        from logger_config import get_logger, trace_execution
+    except ImportError:
+        def trace_execution(func): return func
+
 import pytesseract
 from PIL import Image, ImageDraw
 
@@ -24,39 +32,54 @@ class ImageRedactor:
     def __init__(self):
         self._setup_logging()
 
+    @trace_execution
     def _setup_logging(self):
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
-    def _find_word_boxes(self, image: Image.Image, pii_texts: List[str]) -> List[tuple]:
+    @trace_execution
+    def _find_word_boxes_with_easyocr(self, image: Image.Image, pii_texts: List[str]) -> List[tuple]:
         """
-        מחפש את המיקום הפיזי של כל מחרוזת PII בתמונה.
-        מחזיר רשימה של tuples: (x, y, x+w, y+h) - קואורדינטות המלבן להשחרה.
-
-        הלוגיקה:
-        1. מריץ image_to_data שמחזיר טבלה של כל מילה + מיקומה.
-        2. עבור כל PII text - בודק אם מילה/מחרוזת מופיעה בנתונים.
-        3. אם PII מורכב מכמה מילים - מאחד את המלבנים שלהן.
+        מחפש את המיקום הפיזי של כל מחרוזת PII בתמונה בעזרת EasyOCR.
         """
-        boxes_to_redact = []
-
+        import numpy as np
         try:
-            # image_to_data מחזיר DataFrame-style string עם עמודות:
-            # level, page_num, block_num, par_num, line_num, word_num,
-            # left, top, width, height, conf, text
-            data = pytesseract.image_to_data(
-                image,
-                lang='eng+heb',
-                output_type=pytesseract.Output.DICT
-            )
+            from app import load_ocr_engine
+            reader = load_ocr_engine()
+        except:
+            # Fallback if app import fails
+            import easyocr
+            reader = easyocr.Reader(['heb', 'en'])
 
+        img_array = np.array(image)
+        results = reader.readtext(img_array)
+        
+        boxes_to_redact = []
+        for bbox, text, conf in results:
+            clean_text = text.strip()
+            if not clean_text: continue
+            
+            for pii in pii_texts:
+                if pii and (pii.lower() in clean_text.lower() or pii[::-1].lower() in clean_text.lower()):
+                    x_coords = [p[0] for p in bbox]
+                    y_coords = [p[1] for p in bbox]
+                    rect = (min(x_coords), min(y_coords), max(x_coords), max(y_coords))
+                    boxes_to_redact.append(rect)
+                    self.logger.info(f"Found PII '{pii}' at {rect}")
+                    
+        return boxes_to_redact
+
+    @trace_execution
+    def _find_word_boxes(self, image: Image.Image, pii_texts: List[str]) -> List[tuple]:
+        """חיפוש בעזרת Tesseract (Fallback)"""
+        boxes_to_redact = []
+        try:
+            data = pytesseract.image_to_data(image, lang='eng+heb', output_type=pytesseract.Output.DICT)
             n_boxes = len(data['text'])
-
-            # בנה רשימת מילים עם הקואורדינטות שלהן (מסנן מילים ריקות)
             words = []
             for i in range(n_boxes):
                 word = str(data['text'][i]).strip()
-                if word and int(data['conf'][i]) > 10:  # סף ודאות מינימלי
+                if word and int(data['conf'][i]) > 10:
                     words.append({
                         'text': word,
                         'left': int(data['left'][i]),
@@ -65,47 +88,17 @@ class ImageRedactor:
                         'height': int(data['height'][i]),
                     })
 
-            # עבור כל PII שצריך להשחיר
             for pii in pii_texts:
-                if not pii or not pii.strip():
-                    continue
-
+                if not pii: continue
                 pii_clean = pii.strip()
-                pii_words = pii_clean.split()  # מפצל PII למילים בודדות
-
-                if len(pii_words) == 1:
-                    # PII מילה בודדת - חפש ישירות
-                    for w in words:
-                        if pii_clean.lower() in w['text'].lower():
-                            x1 = w['left']
-                            y1 = w['top']
-                            x2 = w['left'] + w['width']
-                            y2 = w['top'] + w['height']
-                            boxes_to_redact.append((x1, y1, x2, y2))
-                            self.logger.info(f"נמצא PII '{pii_clean}' בקואורדינטות ({x1},{y1},{x2},{y2})")
-                else:
-                    # PII ממספר מילים - חפש רצף של מילים תואמות
-                    for i in range(len(words) - len(pii_words) + 1):
-                        match = True
-                        for j, pii_word in enumerate(pii_words):
-                            if pii_word.lower() not in words[i + j]['text'].lower():
-                                match = False
-                                break
-                        if match:
-                            # מאחד את כל המלבנים של המילים הרצופות למלבן אחד
-                            matched_words = words[i: i + len(pii_words)]
-                            x1 = min(w['left'] for w in matched_words)
-                            y1 = min(w['top'] for w in matched_words)
-                            x2 = max(w['left'] + w['width'] for w in matched_words)
-                            y2 = max(w['top'] + w['height'] for w in matched_words)
-                            boxes_to_redact.append((x1, y1, x2, y2))
-                            self.logger.info(f"נמצא PII מרובה מילים '{pii_clean}' בקואורדינטות ({x1},{y1},{x2},{y2})")
-
+                for w in words:
+                    if pii_clean.lower() in w['text'].lower():
+                        boxes_to_redact.append((w['left'], w['top'], w['left']+w['width'], w['top']+w['height']))
         except Exception as e:
-            self.logger.error(f"שגיאה בחיפוש מיקום PII בתמונה: {e}")
-
+            self.logger.error(f"Tesseract fallback failed: {e}")
         return boxes_to_redact
 
+    @trace_execution
     def redact_image(
         self,
         image_data: Union[str, bytes, Image.Image],
@@ -117,16 +110,16 @@ class ImageRedactor:
         השחרת אזורים בתמונה המכילים PII על ידי ציור מלבנים צבועים.
 
         Args:
-            image_data: נתיב לקובץ, bytes, או אובייקט PIL Image
+            image_data: נתיב לFile, bytes, או אובייקט PIL Image
             pii_texts: רשימת טקסטים להשחרה (כפי שחולצו על ידי ה-PIIDetector)
             output_path: נתיב לשמירת התמונה. אם None, יוחזרו bytes.
             fill_color: צבע המלבן (RGB tuple). ברירת מחדל שחור.
 
         Returns:
-            bytes של התמונה המושחרת, נתיב הקובץ, או None במקרה כשל.
+            bytes של התמונה המושחרת, נתיב הFile, או None במקרה כשל.
         """
         if not pii_texts:
-            self.logger.warning("לא התקבלו טקסטים להשחרה.")
+            self.logger.warning("No texts received for redaction.")
             return None
 
         try:
@@ -142,14 +135,18 @@ class ImageRedactor:
             if image.mode not in ('RGB', 'RGBA'):
                 image = image.convert('RGB')
 
-            self.logger.info(f"🔒 מתחיל השחרת תמונה. גודל: {image.size}. מחרוזות PII: {len(pii_texts)}")
+            self.logger.info(f"🔒 Starting image redaction. Size: {image.size}. PII strings: {len(pii_texts)}")
 
-            # 2. מאתר את המיקום של כל PII בתמונה
-            boxes = self._find_word_boxes(image, pii_texts)
+            # 2. מאתר את המיקום של כל PII בתמונה - ניסיון ראשון עם EasyOCR
+            boxes = self._find_word_boxes_with_easyocr(image, pii_texts)
+            
+            # אם לא נמצא, נסה עם Tesseract
+            if not boxes:
+                boxes = self._find_word_boxes(image, pii_texts)
 
             if not boxes:
-                self.logger.warning("⚠️ לא נמצאו תיבות להשחרה. ייתכן שה-OCR לא זיהה את הטקסטים בתמונה.")
-                return None
+                self.logger.warning("⚠️ No boxes found to redact. OCR might not have detected the texts in the image.")
+                return image_data, 0
 
             # 3. מצייר מלבן שחור מעל כל אזור PII
             draw = ImageDraw.Draw(image)
@@ -161,18 +158,18 @@ class ImageRedactor:
                     fill=fill_color
                 )
 
-            self.logger.info(f"✅ השחרת תמונה הסתיימה. בוצעו {len(boxes)} השחרות.")
+            self.logger.info(f"✅ Image redaction finished. Performed {len(boxes)} redactions.")
 
             # 4. שמירה
             if output_path:
                 image.save(output_path)
-                return output_path
+                return output_path, len(boxes)
             else:
                 output = io.BytesIO()
                 # שמירה בפורמט PNG כדי לשמור על איכות
                 image.save(output, format='PNG')
-                return output.getvalue()
+                return output.getvalue(), len(boxes)
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בהשחרת התמונה: {e}")
+            self.logger.error(f"❌ Error redacting image: {e}")
             return None

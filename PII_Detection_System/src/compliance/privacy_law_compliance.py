@@ -106,7 +106,7 @@ class PrivacyLawCompliance:
                 'risk_level': 'נמוך'
             }
 
-        # ניתוח הממצאים
+        # ניתוח הfindings
         issues = []
         law_categories_found = set()
         critical_count = 0
@@ -225,13 +225,13 @@ class PrivacyLawCompliance:
             return "✅ המסמך תקין ועומד בדרישות חוק הגנת הפרטיות"
 
         elif status == ComplianceStatus.REQUIRES_REVIEW:
-            return f"⚠️ המסמך דורש בדיקה - נמצאו {total} בעיות תאימות פוטנציאליות"
+            return f"⚠️ המסמך דורש בדיקה - Found {total} בעיות תאימות פוטנציאליות"
 
         elif status == ComplianceStatus.NON_COMPLIANT:
-            return f"❌ המסמך לא תקין - נמצאו {critical} בעיות קריטיות שדורשות טיפול מיידי"
+            return f"❌ המסמך לא תקין - Found {critical} בעיות קריטיות שדורשות טיפול מיידי"
 
         else:  # HIGH_RISK
-            return f"🚨 סיכון גבוה! נמצאו {critical} בעיות קריטיות. המסמך אינו עומד בדרישות החוק"
+            return f"🚨 סיכון גבוה! Found {critical} בעיות קריטיות. המסמך אינו עומד בדרישות החוק"
 
     def _generate_recommendations(self, issues: List[ComplianceIssue],
                                   categories: set) -> List[str]:
@@ -347,7 +347,7 @@ class PrivacyLawCompliance:
         # סטטוס
         report_lines.append(f"📊 סטטוס: {compliance_results['status'].value}")
         report_lines.append(f"🎯 תקין: {'כן' if compliance_results['compliant'] else 'לא'}")
-        report_lines.append(f"⚠️ רמת סיכון: {compliance_results['risk_level']}")
+        report_lines.append(f"⚠️ Risk level: {compliance_results['risk_level']}")
         report_lines.append("")
 
         # סיכום

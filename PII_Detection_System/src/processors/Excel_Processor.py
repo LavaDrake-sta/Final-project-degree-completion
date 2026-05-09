@@ -12,6 +12,13 @@ import logging
 from typing import Dict, List, Union, Optional
 import os
 
+try:
+    from src.logger_config import get_logger, trace_execution
+except ImportError:
+    try:
+        from logger_config import get_logger, trace_execution
+    except ImportError:
+        def trace_execution(func): return func
 
 class ExcelProcessor:
     """
@@ -27,15 +34,16 @@ class ExcelProcessor:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
+    @trace_execution
     def extract_text_from_excel(self, excel_data: Union[str, bytes],
                                 filename: str = "") -> Dict:
         """
-        חילוץ טקסט מקובץ Excel
+        חילוץ טקסט מFile Excel
         """
         try:
-            # קריאת הקובץ
+            # קריאת הFile
             if isinstance(excel_data, str):
-                # נתיב לקובץ
+                # נתיב לFile
                 df_dict = pd.read_excel(excel_data, sheet_name=None)
             elif isinstance(excel_data, bytes):
                 # נתוני bytes
@@ -43,7 +51,7 @@ class ExcelProcessor:
             else:
                 raise ValueError("סוג נתוני Excel לא נתמך")
 
-            self.logger.info(f"📊 עיבוד Excel: {len(df_dict)} גיליונות")
+            self.logger.info(f"📊 Processing Excel: {len(df_dict)} sheets")
 
             # חילוץ טקסט מכל הגיליונות
             all_text = []
@@ -75,11 +83,11 @@ class ExcelProcessor:
                 'word_count': len(full_text.split()) if full_text else 0
             }
 
-            self.logger.info(f"✅ Excel: {len(full_text)} תווים מ-{len(df_dict)} גיליונות")
+            self.logger.info(f"✅ Excel: {len(full_text)} characters from {len(df_dict)} sheets")
             return result
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בעיבוד Excel: {e}")
+            self.logger.error(f"❌ Error processing Excel: {e}")
             return {
                 'success': False,
                 'error': str(e),
@@ -89,6 +97,7 @@ class ExcelProcessor:
                 'filename': filename
             }
 
+    @trace_execution
     def _extract_sheet_text(self, df: pd.DataFrame, sheet_name: str) -> str:
         """
         חילוץ טקסט מגיליון בודד
@@ -113,12 +122,13 @@ class ExcelProcessor:
             return "\n".join(text_parts)
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בחילוץ גיליון {sheet_name}: {e}")
+            self.logger.error(f"❌ Error extracting sheet {sheet_name}: {e}")
             return ""
 
+    @trace_execution
     def get_excel_info(self, excel_data: Union[str, bytes]) -> Dict:
         """
-        קבלת מידע על קובץ Excel
+        קבלת מידע על File Excel
         """
         try:
             if isinstance(excel_data, str):
@@ -139,12 +149,13 @@ class ExcelProcessor:
             return info
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בקבלת מידע Excel: {e}")
+            self.logger.error(f"❌ Error getting Excel info: {e}")
             return {}
 
+    @trace_execution
     def analyze_excel_structure(self, excel_data: Union[str, bytes]) -> Dict:
         """
-        ניתוח מבנה קובץ Excel
+        ניתוח מבנה File Excel
         """
         try:
             if isinstance(excel_data, str):
@@ -189,13 +200,13 @@ class ExcelProcessor:
             return structure
 
         except Exception as e:
-            self.logger.error(f"❌ שגיאה בניתוח מבנה: {e}")
+            self.logger.error(f"❌ Error analyzing structure: {e}")
             return {}
 
 
 # פונקציות עזר
 def is_excel_file(filename: str) -> bool:
-    """בדיקה אם הקובץ הוא Excel"""
+    """בדיקה אם הFile הוא Excel"""
     if not filename:
         return False
     return filename.lower().endswith(('.xlsx', '.xls', '.xlsm'))
@@ -214,15 +225,15 @@ if __name__ == "__main__":
     processor = ExcelProcessor()
     print("✅ מעבד Excel מוכן לשימוש!")
 
-    # אם יש קובץ לדוגמה
+    # אם יש File לדוגמה
     test_file = "test_data.xlsx"
     if os.path.exists(test_file):
-        print(f"\n📊 בודק קובץ: {test_file}")
+        print(f"\n📊 בודק File: {test_file}")
         result = processor.extract_text_from_excel(test_file)
 
         if result['success']:
             print(f"✅ הצלחה!")
-            print(f"📄 גיליונות: {', '.join(result['sheets'])}")
-            print(f"📝 תווים: {result['character_count']:,}")
+            print(f"📄 sheets: {', '.join(result['sheets'])}")
+            print(f"📝 characters: {result['character_count']:,}")
         else:
             print(f"❌ שגיאה: {result['error']}")
