@@ -162,6 +162,7 @@ def show_results(results):
 
     rows = [{'#': i,
              'מידע': m.text,
+             'מיקום - שורה': m.line_number if getattr(m, 'line_number', 0) > 0 else "-",
              'קטגוריה': m.category.replace('_',' ').title(),
              'חומרה': f"{_ICONS.get(m.sensitivity.name,'⚪')} {_HEB.get(m.sensitivity.name,'')}",
              'ודאות': f"{m.confidence:.0%}"}
@@ -288,7 +289,8 @@ with col_p:
                     if pii_res and pii_res.get('matches'):
                         pii_texts = [m.text for m in pii_res['matches']]
                         with st.spinner("מייצר File מושחר..."):
-                            redacted_bytes = redactor_pdf.redact_pdf(pdf_file.getvalue(), pii_texts)
+                            redact_result = redactor_pdf.redact_pdf(pdf_file.getvalue(), pii_texts)
+                            redacted_bytes = redact_result[0] if isinstance(redact_result, tuple) else redact_result
                             if redacted_bytes:
                                 st.download_button(
                                     label="📥 הורד File PDF מושחר",
@@ -335,7 +337,8 @@ with col_w:
                     if pii_res and pii_res.get('matches'):
                         pii_texts = [m.text for m in pii_res['matches']]
                         with st.spinner("מייצר File מושחר..."):
-                            redacted_bytes = redactor_word.redact_word(word_file.getvalue(), pii_texts)
+                            redact_result = redactor_word.redact_word(word_file.getvalue(), pii_texts)
+                            redacted_bytes = redact_result[0] if isinstance(redact_result, tuple) else redact_result
                             if redacted_bytes:
                                 st.download_button(
                                     label="📥 הורד File Word מושחר",
@@ -379,7 +382,8 @@ with col_e:
                     if pii_res and pii_res.get('matches'):
                         pii_texts = [m.text for m in pii_res['matches']]
                         with st.spinner("מייצר File מושחר..."):
-                            redacted_bytes = redactor_excel.redact_excel(excel_file.getvalue(), pii_texts)
+                            redact_result = redactor_excel.redact_excel(excel_file.getvalue(), pii_texts)
+                            redacted_bytes = redact_result[0] if isinstance(redact_result, tuple) else redact_result
                             if redacted_bytes:
                                 st.download_button(
                                     label="📥 הורד File Excel מושחר",

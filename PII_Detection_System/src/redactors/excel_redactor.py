@@ -64,7 +64,10 @@ class ExcelRedactor:
                 ws = wb[sheet_name]
                 for row in ws.iter_rows():
                     for cell in row:
-                            # טיפול בערכים שאינם מחרוזת (מספרים, תאריכים וכו')
+                            # טיפול בערכים שאינם מחרוזת
+                            if cell.value is None:
+                                continue
+                                
                             original_value = str(cell.value)
                             new_value = original_value
                             modified = False
@@ -80,7 +83,8 @@ class ExcelRedactor:
                                     redact_count += 1
                                     
                             if modified:
-                                cell.value = new_value
+                                # Update the cell value, and if it was a number/date, we convert it to string
+                                cell.value = str(new_value)
                                 cell.fill = black_fill
                                 cell.font = black_font
 

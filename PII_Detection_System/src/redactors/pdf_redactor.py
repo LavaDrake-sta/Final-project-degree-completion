@@ -63,15 +63,33 @@ class PdfRedactor:
                     # 1. חיפוש סטנדרטי
                     text_instances = page.search_for(text)
                     
-                    # 2. אם לא נמצא, נסה חיפוש הפוך (עבור עברית RTL ב-PDF)
-                    if not text_instances and any(c in "אבגדהוזחטיכלמנסעפצקרשת" for c in text):
+                    # 2. אם לא נמצא, נסה חיפוש הפוך (עבור עברית RTL ב-PDF, רלוונטי גם למספרים)
+                    if not text_instances:
                         reversed_text = text[::-1]
                         text_instances = page.search_for(reversed_text)
                     
-                    # 3. אם עדיין לא נמצא, נסה חיפוש מבוסס מילים (עבור מקרים של רווחים כפולים או תווים נסתרים)
-                    if not text_instances:
-                        # לוגיקה פשוטה לחיפוש רצף מילים
-                        pass # TODO: שיפור עתידי אם נדרש
+                    # 3. אם עדיין לא נמצא, נסה חיפוש מבוסס מילים (עבור מקרים של רווחים כפולים, תווים נסתרים, או פיצול מילים)
+                    if not text_instances and words:
+                        clean_target = "".join(text.split())
+                        rev_target = clean_target[::-1]
+                        
+                        for i in range(len(words)):
+                            combined = ""
+                            rect = None
+                            for j in range(i, min(i + 5, len(words))):
+                                w_text = "".join(words[j][4].split())
+                                combined += w_text
+                                w_rect = fitz.Rect(words[j][:4])
+                                if rect is None:
+                                    rect = w_rect
+                                else:
+                                    rect |= w_rect
+                                
+                                if clean_target in combined or rev_target in combined:
+                                    # נוודא שאנחנו לא משחירים משפט שלם בטעות אם המילה קטנה
+                                    if len(combined) <= len(clean_target) + 4:
+                                        text_instances.append(rect)
+                                    break
 
                     for inst in text_instances:
                         page.add_redact_annot(inst, fill=(0, 0, 0))

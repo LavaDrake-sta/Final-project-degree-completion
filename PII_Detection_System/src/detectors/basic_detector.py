@@ -49,6 +49,7 @@ class PIIMatch:
     end_pos: int
     confidence: float
     sensitivity: SensitivityLevel
+    line_number: int = 0
 
 
 # ─── מילון שמות עברי לקטגוריות ────────────────────────────────────
@@ -456,6 +457,10 @@ class BasicPIIDetector:
 
             # Span-based dedup
             unique_matches = self._span_dedup(all_matches)
+            
+            # חישוב מספרי שורות
+            for m in unique_matches:
+                m.line_number = text.count('\n', 0, m.start_pos) + 1
 
             logger.info(
                 f"✅ Detection finished | "
