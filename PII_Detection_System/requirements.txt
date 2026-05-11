@@ -47,7 +47,7 @@ lxml==6.0.2
 # ===============================
 # User Interface (Streamlit)
 # ===============================
-streamlit==1.52.2
+streamlit==1.35.0
 streamlit-drawable-canvas==0.9.3
 gradio==6.2.0
 
