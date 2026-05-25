@@ -972,7 +972,7 @@ with tab_pdf:
                     num_rows="dynamic",
                     key=f"pdf_preview_{uploaded.name}"
                 )
-                selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()
+                selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()  # noqa: E712
                 
                 # אם נוספו שורות ידניות, נוסיף אותן למערך הממצאים הכולל כדי שיעברו להשחרה הפיזית
                 for idx in selected_indices:
@@ -991,7 +991,6 @@ with tab_pdf:
                 st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
                 from streamlit_drawable_canvas import st_canvas
                 from PIL import Image
-                import io
                 
                 canvas_results = []
                 for page_num, img_bytes in enumerate(images):
@@ -1013,7 +1012,7 @@ with tab_pdf:
                     canvas_results.append((page_num, canvas_res))
 
             st.markdown("---")
-            if st.button(f"🖊️ בצע השחרה מדויקת", type="primary"):
+            if st.button("🖊️ בצע השחרה מדויקת", type="primary"):
                 if not REDACTORS_AVAILABLE:
                     st.error("❌ מנוע ההשחרה חסר, לא ניתן להשחיר.")
                 else:
