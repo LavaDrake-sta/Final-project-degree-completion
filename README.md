@@ -67,11 +67,9 @@ torch
 
 C:\Program Files\Tesseract-OCR\tessdata\
 
-
 בדיקה:
 
 tesseract --list-langs
-
 
 אמור להחזיר:
 
@@ -121,4 +119,3 @@ pip install -r requirements.txt
 
 # הפעלת הסורק
 python -m main
-

@@ -14,7 +14,18 @@ import pytesseract
 from datetime import datetime
 
 # ─── Logging ─────────────────────────────────────────────────────
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# ─── Unicode Short Path Name Support (Windows) ───────────────────
+import ctypes
+def get_short_path_name(long_name_str):
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        ctypes.windll.kernel32.GetShortPathNameW(long_name_str, buf, 1024)
+        return buf.value
+    except Exception:
+        return long_name_str
+
+base_dir = get_short_path_name(os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.join(base_dir, 'src'))
 try:
     from src.logger_config import get_logger, trace_execution, log_progress
 except ImportError:
@@ -48,7 +59,7 @@ if os.path.exists(TESSERACT_PATH):
 TESSERACT_OK = os.path.exists(TESSERACT_PATH)
 
 # ─── paths ────────────────────────────────────────────────────────
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.append(os.path.join(base_dir, 'src'))
 
 # ─── Basic modules ────────────────────────────────────────────────
 try:
@@ -274,34 +285,35 @@ def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, or
     לאחר בחירה — לחצן השחרה שמוריד את הFile המושחר.
     """
     if not entities:
-        st.success("✅ לא נמצא מידע רגיש — המסמך נקי!")
-        return
+        st.success("✅ לא נמצא מידע רגיש אוטומטית. באפשרותך להוסיף טקסט להשחרה בטבלה מטה ידנית.")
+        df = pd.DataFrame(columns=["השחר?", "#", "טקסט", "סוג", "ודאות", "רגישות"])
+        df["השחר?"] = df["השחר?"].astype(bool)
+    else:
+        df = pd.DataFrame([{
+            "השחר?":    True,
+            "#":         i + 1,
+            "טקסט":      e.get("text", ""),
+            "סוג":       translate_entity(e.get("entity_type", e.get("category", ""))),
+            "ודאות":     f"{e.get('score', e.get('confidence', 0)):.0%}",
+            "רגישות":    e.get("sensitivity", ""),
+        } for i, e in enumerate(entities)])
 
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
     # ─── כותרת ─────────────────────────────────────────────────────
-    st.subheader(f"🔍 Found {len(entities)} findings — בחר מה להשחיר")
+    st.subheader(f"🔍 נמצאו {len(entities)} פריטים (ניתן להוסיף ידנית) — בחר מה להשחיר")
     st.caption("סמן ✅ את הfindings שברצונך להשחיר בFile הסופי, ואז לחץ 'בצע השחרה'.")
-
-    # ─── טבלת בחירה ────────────────────────────────────────────────
-    # כל ממצא מקבל checkbox מובנה דרך st.data_editor
-    df = pd.DataFrame([{
-        "השחר?":    True,
-        "#":         i + 1,
-        "טקסט":      e.get("text", ""),
-        "סוג":       translate_entity(e.get("entity_type", e.get("category", ""))),
-        "ודאות":     f"{e.get('score', e.get('confidence', 0)):.0%}",
-        "רגישות":    e.get("sensitivity", ""),
-    } for i, e in enumerate(entities)])
 
     edited_df = st.data_editor(
         df,
         column_config={
             "השחר?": st.column_config.CheckboxColumn("השחר?", default=True),
             "#":      st.column_config.NumberColumn("#", width="small"),
+            "טקסט":    st.column_config.TextColumn("טקסט", required=True),
         },
         use_container_width=True,
         hide_index=True,
+        num_rows="dynamic",
         key=f"preview_{filename}"
     )
 
@@ -323,31 +335,43 @@ def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, or
         st.error("❌ מנוע השחרה לא זמין — לא ניתן להפיק File מושחר.")
         return
 
+    # ─── מפתח session_state ייחודי לכל קובץ ────────────────────────
+    dl_key = f"redact_result_{filename}"
+
     if st.button(f"🖊️ בצע השחרה ({total_selected} פריטים)", type="primary", key=f"do_redact_{filename}"):
         with st.spinner("מבצע השחרה על הFile..."):
             redacted_bytes = None
             mime = "application/octet-stream"
             out_name = f"redacted_{filename}"
+            total_redacted_count = 0
 
             try:
                 if ext == "pdf":
                     redactor = PdfRedactor()
-                    redacted_bytes, total_redacted_count = redactor.redact_pdf(file_bytes, selected_texts)
+                    result = redactor.redact_pdf(file_bytes, selected_texts)
+                    if result and len(result) == 2:
+                        redacted_bytes, total_redacted_count = result
                     mime = "application/pdf"
 
                 elif ext == "docx":
                     redactor = WordRedactor()
-                    redacted_bytes, total_redacted_count = redactor.redact_word(file_bytes, selected_texts)
+                    result = redactor.redact_word(file_bytes, selected_texts)
+                    if result and len(result) == 2:
+                        redacted_bytes, total_redacted_count = result
                     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
                 elif ext == "xlsx":
                     redactor = ExcelRedactor()
-                    redacted_bytes, total_redacted_count = redactor.redact_excel(file_bytes, selected_texts)
+                    result = redactor.redact_excel(file_bytes, selected_texts)
+                    if result and len(result) == 2:
+                        redacted_bytes, total_redacted_count = result
                     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
                 elif ext in ("jpg", "jpeg", "png", "bmp"):
                     redactor = ImageRedactor()
-                    redacted_bytes, total_redacted_count = redactor.redact_image(file_bytes, selected_texts)
+                    result = redactor.redact_image(file_bytes, selected_texts)
+                    if result and len(result) == 2:
+                        redacted_bytes, total_redacted_count = result
                     mime = "image/png"
                     out_name = f"redacted_{os.path.splitext(filename)[0]}.png"
 
@@ -356,20 +380,33 @@ def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, or
 
             except Exception as ex:
                 st.error(f"❌ שגיאה בהשחרה: {ex}")
+                app_logger.error(f"Redaction error: {ex}", exc_info=True)
 
+        # שמירה ב-session_state כדי שכפתור ההורדה לא ייעלם אחרי rerun
         if redacted_bytes:
-            st.success(f"✅ השחרה הושלמה! {total_redacted_count} מופעים הוסרו מהמסמך.")
-            if total_redacted_count < total_selected:
-                st.warning(f"⚠️ שים לב: {total_selected - total_redacted_count} פריטים לא נמצאו בטקסט של המסמך (ייתכן שהם מופיעים כתמונה או בפורמט שלא ניתן לחיפוש).")
-            
-            st.download_button(
-                label=f"⬇️ הורד File מושחר ({out_name})",
-                data=redacted_bytes,
-                file_name=out_name,
-                mime=mime,
-            )
-        elif redacted_bytes is None and ext in ("pdf", "docx", "xlsx", "jpg", "jpeg", "png", "bmp"):
+            st.session_state[dl_key] = {
+                "bytes": redacted_bytes,
+                "mime": mime,
+                "name": out_name,
+                "count": total_redacted_count,
+                "selected": total_selected,
+            }
+        else:
             st.error("❌ לא בוצעו השחרות — ייתכן שהטקסטים לא נמצאו בתוך הFile בצורה הניתנת לעריכה.")
+
+    # ─── כפתור הורדה מחוץ לבלוק הכפתור — נשאר לאחר rerun ──────────
+    if dl_key in st.session_state:
+        res = st.session_state[dl_key]
+        st.success(f"✅ השחרה הושלמה! {res['count']} מופעים הוסרו מהמסמך.")
+        if res['count'] < res['selected']:
+            st.warning(f"⚠️ שים לב: {res['selected'] - res['count']} פריטים לא נמצאו בטקסט (ייתכן שהם מופיעים כתמונה).")
+        st.download_button(
+            label=f"⬇️ הורד קובץ מושחר ({res['name']})",
+            data=res["bytes"],
+            file_name=res["name"],
+            mime=res["mime"],
+            key=f"dl_btn_{filename}",
+        )
 
 
 def ai_entities_to_preview(entities_from_report: list) -> list:
@@ -629,14 +666,19 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
         log_progress(page_num + 1, len(doc), "Visual PDF Scan")
         page = doc[page_num]
         text = page.get_text()
+        words = page.get_text("words")  # (x0, y0, x1, y1, word, block_no, line_no, word_no)
         
         page_findings = []
         
         # זיהוי אם להשתמש ב-OCR: אם המשתמש ביקש, או אם אין כמעט טקסט
-        should_ocr = force_ocr or len(text.strip()) < 30
+        # גם אם יש טקסט, בדוק אם הוא קריא (לא mojibake עברי)
+        readable_chars = sum(1 for c in text if c.isascii() and c.isprintable() or 0x0590 <= ord(c) <= 0x05FF or c.isdigit())
+        text_is_readable = readable_chars > 30
+        should_ocr = force_ocr or len(text.strip()) < 50 or not text_is_readable
         
-        if should_ocr:
-            ocr_engine = load_ocr_engine()
+        ocr_engine = load_ocr_engine() if should_ocr else None
+        
+        if should_ocr and ocr_engine:
             if ocr_engine:
                 import io
                 import numpy as np
@@ -679,7 +721,7 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
                         })
         else:
             # לוגיקה מרחבית (Spatial) - חיפוש כותרות וערכים קרובים
-            words = page.get_text("words") # (x0, y0, x1, y1, word, block_no, line_no, word_no)
+            # words כבר נטען למעלה
             
             # 1. איתור כותרות
             for word_data in words:
@@ -688,7 +730,7 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
                 
                 label_type = None
                 for lab, l_type in SPATIAL_LABELS.items():
-                    if lab in w_text:
+                    if lab in w_text or lab[::-1] in w_text:
                         label_type = l_type
                         break
                 
@@ -736,16 +778,68 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
                                     "id": f"{page_num}_{area.x0}_{area.y0}"
                                 })
             else:
+                # --- שיטה 1: זיהוי על הטקסט המלא ---
+                all_matches = []
+                
+                # זיהוי על הטקסט כמו שהוא (word-scan יטפל בHTF RTL)
                 res = detector_engine.analyze_text(text)
-                for match in res.get("matches", []):
-                    if match.confidence >= 0.4:
-                        entity_text = match.text
-                        search_texts = [entity_text]
-                        if any(0x0590 <= ord(c) <= 0x05FF for c in entity_text):
-                            search_texts.append(entity_text[::-1])
-                            
-                        for s_text in search_texts:
-                            for area in page.search_for(s_text):
+                all_matches.extend(res.get("matches", []))
+                
+                # --- שיטה 2: זיהוי מילה-מילה (גיבוי לPDF עם encoding שבור) ---
+                # מאחד מילים סמוכות לקבוצות של עד 5 מילים ומריץ detection
+                word_texts_with_rects = []
+                for i in range(len(words)):
+                    # אוסף חלונות של מילים (1 עד 5)
+                    for window in range(1, 6):
+                        if i + window > len(words):
+                            break
+                        chunk_words = words[i:i+window]
+                        chunk_text = " ".join(w[4] for w in chunk_words)
+                        chunk_rect = fitz.Rect(chunk_words[0][:4])
+                        for w in chunk_words[1:]:
+                            chunk_rect |= fitz.Rect(w[:4])
+                        word_texts_with_rects.append((chunk_text, chunk_rect))
+                
+                # הרצת זיהוי על כל חלון מילים
+                seen_word_matches = set()
+                for chunk_text, chunk_rect in word_texts_with_rects:
+                    chunk_res = detector_engine.analyze_text(chunk_text)
+                    for match in chunk_res.get("matches", []):
+                        if match.confidence >= 0.4 and match.text not in seen_word_matches:
+                            seen_word_matches.add(match.text)
+                            page_findings.append({
+                                "page": page_num,
+                                "rect": [chunk_rect.x0, chunk_rect.y0, chunk_rect.x1, chunk_rect.y1],
+                                "text": match.text,
+                                "type": match.category,
+                                "score": match.confidence,
+                                "id": f"{page_num}_{chunk_rect.x0}_{chunk_rect.y0}_{match.category}_word"
+                            })
+                
+                # --- עיבוד תוצאות שיטה 1 + מציאת קואורדינטות ---
+                seen_fulltext = set()
+                for match in all_matches:
+                    if match.confidence < 0.4:
+                        continue
+                    entity_text = match.text
+                    if entity_text in seen_fulltext:
+                        continue
+                    seen_fulltext.add(entity_text)
+                    
+                    # אם כבר נמצא דרך word scan, דלג
+                    if entity_text in seen_word_matches:
+                        continue
+                    
+                    search_texts = [entity_text]
+                    if any(0x0590 <= ord(c) <= 0x05FF for c in entity_text):
+                        search_texts.append(entity_text[::-1])
+                        
+                    found_any = False
+                    for s_text in search_texts:
+                        found_areas = page.search_for(s_text)
+                        if found_areas:
+                            found_any = True
+                            for area in found_areas:
                                 page_findings.append({
                                     "page": page_num,
                                     "rect": [area.x0, area.y0, area.x1, area.y1],
@@ -754,14 +848,44 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
                                     "score": match.confidence,
                                     "id": f"{page_num}_{area.x0}_{area.y0}_{match.category}"
                                 })
+                    
+                    # Fallback: word-window search
+                    if not found_any:
+                        clean_target = "".join(entity_text.split())
+                        for i in range(len(words)):
+                            combined = ""
+                            rect = None
+                            for j in range(i, min(i + 8, len(words))):
+                                w_text = "".join(words[j][4].split())
+                                combined += w_text
+                                w_rect = fitz.Rect(words[j][:4])
+                                if rect is None:
+                                    rect = w_rect
+                                else:
+                                    rect |= w_rect
+                                if clean_target in combined or clean_target[::-1] in combined:
+                                    if len(combined) <= len(clean_target) + 6:
+                                        page_findings.append({
+                                            "page": page_num,
+                                            "rect": [rect.x0, rect.y0, rect.x1, rect.y1],
+                                            "text": entity_text,
+                                            "type": match.category,
+                                            "score": match.confidence,
+                                            "id": f"{page_num}_{rect.x0}_{rect.y0}_{match.category}_fb"
+                                        })
+                                    break
                         
-        # סינון כפילויות בPage הנוכחי 
+        # סינון כפילויות בPage הנוכחי — לפי מיקום ולפי טקסט
         unique_page_findings = []
-        seen = set()
+        seen_positions = set()
+        seen_texts = set()
         for f in page_findings:
-            key = (round(f["rect"][0]/2)*2, round(f["rect"][1]/2)*2) # עיגול קל למניעת כפילויות כמעט זהות
-            if key not in seen:
-                seen.add(key)
+            pos_key = (round(f["rect"][0]/2)*2, round(f["rect"][1]/2)*2)
+            text_key = f["text"].strip()
+            # דלג אם כבר נמצא באותו מיקום, או אם אותו טקסט כבר קיים עם ציון גבוה יותר
+            if pos_key not in seen_positions and text_key not in seen_texts:
+                seen_positions.add(pos_key)
+                seen_texts.add(text_key)
                 unique_page_findings.append(f)
                 
         findings.extend(unique_page_findings)
@@ -824,25 +948,43 @@ with tab_pdf:
             
             with col1:
                 st.markdown("**רשימת findings אוטומטיים:**")
-                if findings:
+                if not findings:
+                    st.info("לא זוהו אוטומטית ממצאים להשחרה. באפשרותך להוסיף טקסט להשחרה ידנית או לצייר מלבנים.")
+                    df = pd.DataFrame(columns=["השחר?", "עמוד", "טקסט", "סוג"])
+                    df["השחר?"] = df["השחר?"].astype(bool)
+                else:
                     df = pd.DataFrame([{
                         "השחר?": True,
                         "עמוד": f.get("page", 0) + 1,
                         "טקסט": f.get("text", ""),
                         "סוג": translate_entity(f.get("type", "")),
                     } for f in findings])
-                    
-                    edited_df = st.data_editor(
-                        df,
-                        column_config={"השחר?": st.column_config.CheckboxColumn("השחר?", default=True)},
-                        use_container_width=True,
-                        hide_index=True,
-                        key=f"pdf_preview_{uploaded.name}"
-                    )
-                    selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()
-                else:
-                    st.info("לא זוהו אוטומטית findings להשחרה.")
-                    selected_indices = []
+                
+                edited_df = st.data_editor(
+                    df,
+                    column_config={
+                        "השחר?": st.column_config.CheckboxColumn("השחר?", default=True),
+                        "טקסט": st.column_config.TextColumn("טקסט", required=True),
+                        "עמוד": st.column_config.NumberColumn("עמוד (אופציונלי)", required=False)
+                    },
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="dynamic",
+                    key=f"pdf_preview_{uploaded.name}"
+                )
+                selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()
+                
+                # אם נוספו שורות ידניות, נוסיף אותן למערך הממצאים הכולל כדי שיעברו להשחרה הפיזית
+                for idx in selected_indices:
+                    if idx >= len(findings):
+                        # זו שורה ידנית שהמשתמש הוסיף!
+                        row = edited_df.loc[idx]
+                        if row["טקסט"]:
+                            findings.append({
+                                "text": row["טקסט"],
+                                "type": "MANUAL",
+                                "page": row.get("עמוד", 1) - 1 if pd.notna(row.get("עמוד")) else 0
+                            })
 
             with col2:
                 st.markdown("**תצוגת המסמך (צייר מלבנים להשחרה):**")
@@ -891,8 +1033,8 @@ with tab_pdf:
                                         x1 = x0 + obj["width"] * obj["scaleX"]
                                         y1 = y0 + obj["height"] * obj["scaleY"]
                                         
-                                        # התמונה רונדרה בגודל פי 1.1, אז מחלקים ב-1.1 כדי לקבל את הקואורדינטות המקוריות ב-PDF
-                                        scale_factor = 1.1
+                                        # התמונה רונדרה בגודל פי 1.2, אז מחלקים ב-1.2 כדי לקבל את הקואורדינטות המקוריות ב-PDF
+                                        scale_factor = 1.2
                                         selected_findings.append({
                                             "page": page_num,
                                             "rect": [x0/scale_factor, y0/scale_factor, x1/scale_factor, y1/scale_factor]

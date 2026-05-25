@@ -211,3 +211,5 @@ __marimo__/
 /.idea/inspectionProfiles/profiles_settings.xml
 /.idea/inspectionProfiles/Project_Default.xml
 /.idea/vcs.xml
+venv_old/
+PII_Detection_System/dummy_test_redacted.pdf
