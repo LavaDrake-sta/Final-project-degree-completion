@@ -63,11 +63,11 @@ sys.path.append(os.path.join(base_dir, 'src'))
 
 # ─── Basic modules ────────────────────────────────────────────────
 try:
-    from detectors.basic_detector import BasicPIIDetector, SensitivityLevel
-    from processors.image_processor import ImageProcessor
-    from processors.pdf_processor import PDFProcessor
-    from processors.word_processor import WordProcessor
-    from processors.Excel_Processor import ExcelProcessor
+    from src.detectors.basic_detector import BasicPIIDetector, SensitivityLevel
+    from src.processors.image_processor import ImageProcessor
+    from src.processors.pdf_processor import PDFProcessor
+    from src.processors.word_processor import WordProcessor
+    from src.processors.Excel_Processor import ExcelProcessor
 except ImportError as e:
     st.error(f"❌ שגיאת ייבוא: {e}")
     st.stop()
@@ -75,7 +75,7 @@ except ImportError as e:
 # ─── AI Pipeline ─────────────────────────────────────────────────
 AI_PIPELINE_AVAILABLE = False
 try:
-    from pipeline import PIIPipeline
+    from src.pipeline import PIIPipeline
     AI_PIPELINE_AVAILABLE = True
 except ImportError:
     pass
