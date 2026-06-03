@@ -25,12 +25,13 @@ def get_short_path_name(long_name_str):
         return long_name_str
 
 base_dir = get_short_path_name(os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, base_dir)
 sys.path.insert(0, os.path.join(base_dir, 'src'))
 try:
     from src.logger_config import get_logger, trace_execution, log_progress
 except ImportError:
     try:
-        from logger_config import get_logger, trace_execution, log_progress
+        from logger_config import get_logger, trace_execution, log_progress  # type: ignore
     except ImportError:
         import logging
         def get_logger(name):
@@ -83,7 +84,7 @@ except ImportError:
 # ─── Redactors ───────────────────────────────────────────────────
 REDACTORS_AVAILABLE = False
 try:
-    from redactors import PdfRedactor, WordRedactor, ExcelRedactor, ImageRedactor
+    from redactors import PdfRedactor, WordRedactor, ExcelRedactor, ImageRedactor  # type: ignore
     REDACTORS_AVAILABLE = True
 except ImportError:
     try:
@@ -202,7 +203,7 @@ def load_all_engines_v3():
 @trace_execution
 def load_ocr_engine():
     try:
-        import easyocr
+        import easyocr  # type: ignore
         # False for GPU since we are assuming standard local deployment without CUDA setup
         return easyocr.Reader(['he', 'en'], gpu=False)
     except Exception as e:
@@ -527,7 +528,7 @@ with tab_img:
                 
                 with col1:
                     st.subheader("👀 תצוגה מקדימה")
-                    st.image(st.session_state["img_visual_preview"], use_container_width=True)
+                    st.image(st.session_state["img_visual_preview"], use_column_width=True)
                 
                 with col2:
                     st.subheader("📋 findings")

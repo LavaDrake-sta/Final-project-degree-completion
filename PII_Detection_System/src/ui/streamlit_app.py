@@ -14,23 +14,39 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 
 # נתיב src
 current_file = Path(__file__)
-src_path = current_file.parent.parent.parent / "src"
+project_path = current_file.parent.parent.parent
+src_path = project_path / "src"
+sys.path.insert(0, str(project_path))
 sys.path.insert(0, str(src_path))
 
 try:
-    from detectors.basic_detector import BasicPIIDetector, SensitivityLevel
-    from processors.image_processor import ImageProcessor
-    from processors.pdf_processor import PDFProcessor
-    from processors.word_processor import WordProcessor
-    from processors.Excel_Processor import ExcelProcessor
-    from redactors.excel_redactor import ExcelRedactor
-    from redactors.word_redactor import WordRedactor
-    from redactors.pdf_redactor import PdfRedactor
+    from src.detectors.basic_detector import BasicPIIDetector, SensitivityLevel
+    from src.processors.image_processor import ImageProcessor
+    from src.processors.pdf_processor import PDFProcessor
+    from src.processors.word_processor import WordProcessor
+    from src.processors.Excel_Processor import ExcelProcessor
+    from src.redactors.excel_redactor import ExcelRedactor
+    from src.redactors.word_redactor import WordRedactor
+    from src.redactors.pdf_redactor import PdfRedactor
+    from src.redactors.image_redactor import ImageRedactor
     detector_available = True
     logging.info("Modules loaded OK")
 except ImportError as e:
-    detector_available = False
-    logging.error(f"Import error: {e}")
+    try:
+        from detectors.basic_detector import BasicPIIDetector, SensitivityLevel
+        from processors.image_processor import ImageProcessor
+        from processors.pdf_processor import PDFProcessor
+        from processors.word_processor import WordProcessor
+        from processors.Excel_Processor import ExcelProcessor
+        from redactors.excel_redactor import ExcelRedactor
+        from redactors.word_redactor import WordRedactor
+        from redactors.pdf_redactor import PdfRedactor
+        from redactors.image_redactor import ImageRedactor
+        detector_available = True
+        logging.info("Modules loaded OK (fallback)")
+    except ImportError as e2:
+        detector_available = False
+        logging.error(f"Import error: {e2}")
 
 st.set_page_config(
     page_title="זיהוי מידע אישי רגיש",
@@ -141,6 +157,7 @@ detector, image_proc, pdf_proc, word_proc, excel_proc = load_processors()
 redactor_word = WordRedactor()
 redactor_excel = ExcelRedactor()
 redactor_pdf = PdfRedactor()
+redactor_image = ImageRedactor()
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 _ICONS = {'LOW': '🟢', 'MEDIUM': '🟡', 'HIGH': '🟠', 'CRITICAL': '🔴'}
@@ -235,10 +252,10 @@ with col_r:
     img_file = st.file_uploader("Upload Image", type=['jpg','jpeg','png','bmp','tiff','tif'],
                                 key="up_img", label_visibility="collapsed")
     if img_file:
-        st.image(img_file, use_container_width=True)
+        st.image(img_file, use_column_width=True)
         if st.button("🔍 נתח תמונה", key="btn_img"):
             with st.spinner("OCR..."):
-                ocr = image_proc.extract_text_from_image(img_file.read(), img_file.name)
+                ocr = image_proc.extract_text_from_image(img_file.getvalue(), img_file.name)
             if ocr['success'] and ocr['text'].strip():
                 with st.expander("📝 טקסט שחולץ"):
                     st.code(ocr['text'][:600], language=None)

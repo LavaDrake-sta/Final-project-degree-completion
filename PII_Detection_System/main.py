@@ -6,6 +6,12 @@ PII Detection System - Main Entry Point
 import sys
 import os
 
+# Reconfigure stdout/stderr to use UTF-8 to prevent encoding errors on Windows console
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 # הוספת התיקייה הנוכחית לנתיב
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(current_dir, 'src')
