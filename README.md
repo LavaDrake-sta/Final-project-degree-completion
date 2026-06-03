@@ -1,127 +1,98 @@
-# 🧠 PII Detection System
+# 🧠 PII Detection System (מערכת לזיהוי והשחרת מידע רגיש)
 
-מערכת לזיהוי **פרטים אישיים רגישים (PII)** במסמכים ובתמונות — עם תמיכה מלאה בעברית.
-המערכת סורקת קבצי **PDF / תמונות / Word / Excel**, מזהה פרטים כמו שם, תעודת זהות, טלפון, כתובת ודוא"ל,
-מאפשרת **תצוגה מקדימה** לכל סוג קובץ, ומפיקה **דוח מסכם** עם הערכת סיכון לכל קובץ.
+מערכת מתקדמת לזיהוי, סימון והשחרה של **פרטים אישיים רגישים (PII)** במסמכים ובתמונות — עם תמיכה נרחבת בשפה העברית.
+המערכת סורקת קבצי **PDF / תמונות / Word / Excel**, מזהה פרטים רגישים, מציגה אותם ב**תצוגה מקדימה ויזואלית לחלוטין** (כולל סריקה והדגשה של Word ו-Excel על גבי תמונה), ומאפשרת למשתמש לבחור מה להשחיר, להוסיף השחרה ידנית, ולהוריד קובץ נקי מתוכן רגיש.
 
-המערכת רצה דרך ממשק **Streamlit**, ומשתמשת ב-**Microsoft Presidio** יחד עם מודל **AI (Transformers)**
-לזיהוי מבוסס-הקשר.
+המערכת פועלת באמצעות **Streamlit** ומציעה שני מנועי זיהוי עוצמתיים שרצים **מקומית בלבד (ללא שליחת נתונים החוצה)**.
 
 ---
 
-## ✨ שני מצבי זיהוי
+## ✨ תכונות מרכזיות
 
-| מצב | מבוסס על | תופס היטב | מגבלות |
-|-----|----------|-----------|--------|
-| **Regex / חוקים** | דפוסים ידניים + `PatternRecognizer` | מידע **מבני**: ת"ז, טלפון, אימייל, כרטיס אשראי, IBAN, תאריכים | לא מזהה שמות/כתובות (אין להם צורה קבועה) |
-| **AI** | Presidio + מודל NER (Transformers / spaCy) | מידע **מבוסס-הקשר**: שמות, כתובות, ארגונים | דורש התקנת `torch`/`transformers` ומודל מתאים |
-
-> שמות וכתובות הם טקסט חופשי, ולכן מצב ה-Regex תמיד יזהה אותם פחות טוב ממצב ה-AI — זה תכנוני.
-> כדי לזהות עברית כראוי יש לוודא שהניתוח רץ עם מנוע NLP עברי ועם `language="he"`.
+- 📄 **תמיכה בפורמטים מרובים:** PDF, תמונות (JPG, PNG), קבצי Word (.docx) ו-Excel (.xlsx).
+- 👁️ **תצוגה מקדימה ויזואלית (Visual Preview):** בניגוד למערכות טקסטואליות פשוטות, המערכת מציגה את מסמכי ה-Word וה-Excel בדיוק כפי שהם (באמצעות המרת COM ל-PDF מאחורי הקלעים), ומסמנת במרקר צהוב את המילים הרגישות שאותרו.
+- 🖊️ **השחרה כפולה:**
+  - **אוטומטית:** סימון V בטבלה יבצע חיפוש של הטקסט במסמך וישחיר אותו.
+  - **ידנית ויזואלית:** עבור קבצי תמונה ו-PDF, ניתן לצייר מלבנים שחורים עם העכבר ישירות על תמונת המסמך כדי למחוק מידע רגיש פיזית.
 
 ---
 
-## 📁 מבנה תיקיות
+## 🔍 שני מצבי זיהוי במערכת
+
+| מצב | מנוע וספריות | יכולות בולטות | יתרונות וחסרונות |
+|-----|--------------|---------------|------------------|
+| **מצב Regex (חוקים וקונטקסט)** | מנוע ייעודי (`BasicPIIDetector`) מבוסס חוקים לוגיים בעברית | ת"ז, טלפון, אימייל, כרטיס אשראי, אתרי אינטרנט, תאריכים, סכומי כסף ושכר, כתובות רחוב ומידע הנמצא בטבלאות | **מהיר מאוד**. מצוין בזיהוי מבני נתונים מדויקים. זיהוי שמות משפחה תלוי במילות הקשר ("שם:", "תעודת זהות"). |
+| **מצב AI מלא** | Microsoft Presidio + מודל NLP (`en_core_web_lg`) | מבוסס-הקשר: שמות חופשיים, כתובות מורכבות, ארגונים, תפקידים | **חכם יותר**. מסוגל להבין טקסט חופשי. איטי יותר ודורש טעינת מודלים כבדים לזיכרון. |
+
+---
+
+## 📁 מבנה הפרויקט (מעודכן)
 
 ```
 PII_Detection_System/
+├─ app.py                           # קובץ ההפעלה הראשי (הממשק המשתמש - Streamlit)
+├─ requirements.txt                 # רשימת הספריות (Dependencies) הדרושות
 ├─ src/
-│  ├─ ui/
-│  │  ├─ streamlit_app.py   # הממשק הראשי (Streamlit) – הרצה מכאן
-│  │  └─ preview.py         # תצוגה מקדימה: PDF / תמונה / Word / Excel
-│  ├─ pipeline.py           # PIIPipeline – מקשר detector + decision_engine
-│  ├─ detector.py           # עטיפת Presidio AnalyzerEngine + anonymize
-│  ├─ pii_rules.py          # חוקים ו-Regex (recognizers) לזיהוי PII
-│  └─ report.py             # הפקת דוח CSV/Excel
-├─ data/
-│  ├─ input/                # קבצים לבדיקה
-│  └─ output/               # פה ייווצר הדוח
+│  ├─ pipeline/
+│  │  ├─ main_pipeline.py           # מנהל את תזרים העבודה (Pipeline) העיקרי
+│  │  ├─ pii_detector.py            # חיבור למנוע ה-AI של Presidio
+│  │  └─ ocr_processor.py           # חיבור ל-Tesseract לחילוץ טקסט מתמונות
+│  ├─ detectors/
+│  │  ├─ basic_detector.py          # מנוע ה-Regex הראשי (זיהוי מדויק בעברית)
+│  │  └─ decision_engine.py         # חישוב רמות סיכון 
+│  ├─ redactors/                    # מנועי ההשחרה והצנזור השונים
+│  │  ├─ pdf_redactor.py
+│  │  ├─ word_redactor.py
+│  │  ├─ excel_redactor.py
+│  │  └─ image_redactor.py
+│  └─ utils/
+│     └─ pdf_converter.py           # ממיר קבצי Office לתמונות לתצוגה ויזואלית בעזרת Microsoft COM
 └─ ...
-requirements.txt
-README.md
-test_new_pipeline.py
 ```
-
-> המבנה לעיל מתאר את הארכיטקטורה החדשה; התאם שמות קבצים אם שונה אצלך.
 
 ---
 
-## ⚙️ התקנה
+## ⚙️ דרישות והתקנה
 
-### 1. Python
-מומלץ **Python 3.10 / 3.11**.
-```bash
-python --version
-```
-
-### 2. סביבת עבודה (מומלץ)
+### 1. Python וסביבת עבודה
+מומלץ להשתמש ב-**Python 3.10 / 3.11**.
 ```bash
 python -m venv venv
-venv\Scripts\activate        # Windows
-source venv/bin/activate     # Linux / Mac
+# Windows:
+venv\Scripts\activate
 ```
 
-### 3. ספריות Python
+### 2. התקנת ספריות
+התקן את כלל חבילות התלות הקיימות ב-`requirements.txt`:
 ```bash
-pip install -U pip
 pip install -r requirements.txt
 ```
-כולל: `streamlit`, `presidio-analyzer`, `presidio-anonymizer`, `spacy`, `transformers`, `torch`,
-`python-docx`, `openpyxl`, `xlrd`, `pymupdf`, `pdfplumber`, `pytesseract`, `Pillow`, `opencv-python`, `pandas`.
+> הפרויקט משתמש כעת ב-`streamlit-drawable-canvas` בשביל ההשחרה הידנית הויזואלית, ו-`win32com` להמרה חכמה של קבצי Office.
 
-### 4. Tesseract OCR (חובה לתמונות ו-PDF סרוק)
-- **Windows:** הורד מ-[UB-Mannheim](https://github.com/UB-Mannheim/tesseract/wiki), ודא ש-`C:\Program Files\Tesseract-OCR\` נמצא ב-PATH.
-- **Ubuntu:** `sudo apt install tesseract-ocr tesseract-ocr-heb`
-- **macOS:** `brew install tesseract tesseract-lang`
+### 3. Tesseract OCR (חובה לפענוח תמונות ו-PDF סרוקים)
+התקן את Tesseract וודא שהשפה העברית מותקנת (`heb.traineddata`). 
+ב-Windows, נדרש לוודא שתיקיית ההתקנה (`C:\Program Files\Tesseract-OCR`) נמצאת ב-PATH של מערכת ההפעלה.
 
-הורד את שפת העברית `heb.traineddata` מ-[tessdata_best](https://github.com/tesseract-ocr/tessdata_best/blob/main/heb.traineddata)
-ושים אותה ב-`tessdata` של Tesseract. בדיקה:
-```bash
-tesseract --list-langs   # אמור להציג eng + heb
-```
-
-### 5. מודל NLP עברי (למצב AI)
-ודא שטעון מודל שמבין עברית (למשל מודל NER עברי מבוסס Transformers, או pipeline עברי).
-הקפד להעביר `language="he"` בקריאות הניתוח.
+### 4. תוכנות Microsoft Office (לממשק הויזואלי בלבד)
+כדי לאפשר את התצוגה המקדימה *הויזואלית* (שבה רואים ממש את הדף) של קבצי Word ו-Excel, המערכת מסתמכת על `win32com` שקורא לאפליקציית ה-Microsoft Word וה-Excel המותקנות במחשב. נדרש Office מותקן במערכת שעליה רץ השרת.
 
 ---
 
-## 🚀 הפעלה
+## 🚀 הפעלה והרצה
+
+נווט לתיקיית `PII_Detection_System` והרץ את הממשק דרך `app.py`:
 
 ```bash
 cd PII_Detection_System
-streamlit run src/ui/streamlit_app.py
+streamlit run app.py
 ```
 
-בממשק:
-1. **העלאת קובץ** — PDF / תמונה (JPG/PNG) / Word (.docx) / Excel (.xlsx/.xls).
-2. **תצוגה מקדימה** — לחיצה מציגה את תוכן הקובץ בדפדפן.
-3. **בחירת מצב זיהוי** — Regex או AI.
-4. **סריקה** — המערכת מזהה PII, מציגה ישויות שנמצאו, הערכת סיכון וטקסט אנונימי.
-5. **דוח** — נשמר תחת `data/output/`.
+לאחר ההרצה, ייפתח ממשק בדפדפן. 
+- באפשרותך לבחור את סוג הקובץ דרך הלשוניות העליונות (תמונה, Word, Excel, PDF או בדיקת AI גלובלית).
+- סמן בטבלה מטה אילו פרטים תרצה להשחיר מתוך כלל הממצאים שזוהו.
+- לחץ על לחצן ההשחרה כדי להוריד את הקובץ המוכן והנקי.
 
 ---
 
-## 🧪 בדיקה מהירה
-```bash
-python test_new_pipeline.py
-```
-הטסט טוען את `PIIPipeline`, מריץ זיהוי על משפט עברי לדוגמה, ומדפיס את הישויות, הערכת הסיכון והטקסט האנונימי.
-
-> שים לב: ודא שהבדיקה מריצה את הניתוח עם `language="he"` ולא `"en"`, אחרת שמות/כתובות בעברית לא יזוהו.
-
----
-
-## 📄 פורמטים נתמכים
-
-| פורמט | קריאה | תצוגה מקדימה |
-|-------|-------|--------------|
-| PDF | `pymupdf` / `pdfplumber` (+OCR לסרוק) | ✅ |
-| תמונה (JPG/PNG) | `pytesseract` (OCR) | ✅ |
-| Word (.docx) | `python-docx` | ✅ |
-| Excel (.xlsx/.xls) | `pandas` + `openpyxl`/`xlrd` | ✅ |
-
----
-
-## 🔒 פרטיות
-המערכת מתוכננת לריצה **מקומית** — הקבצים הרגישים אינם נשלחים לשרת חיצוני.
+## 🔒 פרטיות ואבטחת מידע
+מערכת זו תוכננה ועוצבה לריצה מקומית. **אף קובץ** ואף נתון רגיש לא נשלח לרשת האינטרנט. כל ההמרות (כולל ל-PDF), הפענוחים (OCR) וההשחרות רצים אך ורק על המעבד המקומי של המשתמש.

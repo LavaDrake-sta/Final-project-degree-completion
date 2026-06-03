@@ -43,6 +43,8 @@ class FileHandler:
             return "xlsx"
         elif name.endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tiff')):
             return "image"
+        elif name.endswith('.txt'):
+            return "txt"
         else:
             mime_type, _ = mimetypes.guess_type(name)
             if mime_type and mime_type.startswith('image/'):
@@ -62,6 +64,8 @@ class FileHandler:
             return self._process_xlsx(file_path, file_bytes)
         elif file_type == "image":
             return self._process_image(file_path, file_bytes)
+        elif file_type == "txt":
+            return self._process_txt(file_path, file_bytes)
         else:
             return {"success": False, "error": f"Unsupported file type: {file_type}", "text": ""}
 
@@ -141,5 +145,17 @@ class FileHandler:
                 text = self.ocr_processor.extract_from_bytes(file_bytes)
                 
             return {"success": True, "text": text, "file_type": "image"}
+        except Exception as e:
+            return {"success": False, "error": str(e), "text": ""}
+
+    @trace_execution
+    def _process_txt(self, file_path: str = None, file_bytes: bytes = None) -> Dict[str, Any]:
+        try:
+            if file_path:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    text = f.read()
+            else:
+                text = file_bytes.decode("utf-8", errors="ignore")
+            return {"success": True, "text": text, "file_type": "txt"}
         except Exception as e:
             return {"success": False, "error": str(e), "text": ""}

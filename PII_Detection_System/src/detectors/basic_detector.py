@@ -71,6 +71,27 @@ CATEGORY_HEBREW = {
     "keyword_financial":     "מידע פיננסי",
     "keyword_personal":      "מידע אישי",
     "keyword_identification":"זיהוי",
+    "context_password":      "סיסמה (הקשר)",
+    "context_health_fund":   "קופת חולים (הקשר)",
+    "context_company_id":    "ח.פ / עוסק מורשה (הקשר)",
+    "context_medical_record":"תיק רפואי (הקשר)",
+    "context_blood_type":    "סוג דם (הקשר)",
+    "context_military_profile":"פרופיל צבאי (הקשר)",
+    "context_cvv":           "CVV (הקשר)",
+    "context_auth_code":     "קוד אימות (הקשר)",
+    "context_username":      "שם משתמש (הקשר)",
+    "context_passport":      "דרכון (הקשר)",
+    "context_driver_license":"רישיון נהיגה (הקשר)",
+    "context_license_plate": "לוחית רישוי (הקשר)",
+    "context_mac_address":   "כתובת MAC (הקשר)",
+    "context_zipcode":       "מיקוד (הקשר)",
+    "date_of_birth":         "תאריך לידה",
+    "job_title":             "תפקיד / מקצוע",
+    "heb_address":           "כתובת מגורים",
+    "blood_type":            "סוג דם",
+    "health_fund":           "קופת חולים",
+    "website":               "אתר אינטרנט",
+    "financial_amount":      "סכום כספי / שכר",
 }
 
 
@@ -127,9 +148,9 @@ class BasicPIIDetector:
                 'description': 'מספר אישי צבאי'
             },
             'phone_number': {
-                'pattern': r'\b(?:\+972[- ]?|0)([23489]|[57]\d)[- ]?\d{3}[- ]?\d{4}\b|\b(?:\+972|0)[- ]?\d[\d\-\s\–]{7,15}\b',
+                'pattern': r'(?:\+?\d{1,3}[\s\-\.]*)?\(?\d{2,4}\)?[\s\-\.]*\d{3,4}[\s\-\.]*\d{3,4}',
                 'sensitivity': SensitivityLevel.HIGH,
-                'description': 'מספר טלפון ישראלי'
+                'description': 'מספר טלפון'
             },
             'email': {
                 'pattern': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b',
@@ -170,6 +191,41 @@ class BasicPIIDetector:
                 'pattern': r'\b\d{5,7}\b',
                 'sensitivity': SensitivityLevel.MEDIUM,
                 'description': 'מיקוד'
+            },
+            'date_of_birth': {
+                'pattern': r'\b\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}\b',
+                'sensitivity': SensitivityLevel.HIGH,
+                'description': 'תאריך (חשד לתאריך לידה)'
+            },
+            'heb_address': {
+                'pattern': r'(?:רחוב|שדרות|שד\'|דרך|סמטת|משעול|מבוא|שכונת|קיבוץ|מושב|עיר)\s+[א-ת\s]{2,20}\s+\d{1,4}',
+                'sensitivity': SensitivityLevel.MEDIUM,
+                'description': 'כתובת מגורים'
+            },
+            'blood_type': {
+                'pattern': r'\b(?:[ABO][+-]|AB[+-])\b',
+                'sensitivity': SensitivityLevel.HIGH,
+                'description': 'סוג דם'
+            },
+            'health_fund': {
+                'pattern': r'\b(?:מכבי|כללית|מאוחדת|לאומית)\b',
+                'sensitivity': SensitivityLevel.MEDIUM,
+                'description': 'קופת חולים'
+            },
+            'job_title': {
+                'pattern': r'\b(מנהל|מנהלת|מנכ"ל|מנכ"לית|סמנכ"ל|סמנכ"לית|מהנדס|מהנדסת|ארכיטקט|אדריכל|רופא|רופאה|ד"ר|פרופסור|עורך דין|עורכת דין|עו"ד|חשב|חשבת|רואה חשבון|מנתח מערכות|מתכנת|מתכנתת|אנליסט|שוטר|קצין|טייס|CEO|CTO|CFO|COO|VP|Director|Manager)\b',
+                'sensitivity': SensitivityLevel.MEDIUM,
+                'description': 'תפקיד או מקצוע'
+            },
+            'website': {
+                'pattern': r'\b(?:https?://|www\.)[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:/\S*)?\b',
+                'sensitivity': SensitivityLevel.LOW,
+                'description': 'אתר אינטרנט / URL'
+            },
+            'financial_amount': {
+                'pattern': r'(?:₪|\$|€|£|ש"ח|שח|שקלים|דולר|יורו)\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d{1,3}(?:,\d{3})*(?:\.\d{2})?\s*(?:₪|\$|€|£|ש"ח|שח|שקלים|דולר|יורו)',
+                'sensitivity': SensitivityLevel.MEDIUM,
+                'description': 'סכום כספי / שכר'
             },
         }
 
@@ -264,6 +320,19 @@ class BasicPIIDetector:
              r'[\s:״"=-]*(\d{5,7})'),
         ]
 
+        # ─── מילות מפתח ← ערך לפניהן (כמו בטבלאות) ───────────────
+        # פורמט: (entity_category, sensitivity, value_pattern, keyword_suffix)
+        self.context_kw_suffix_patterns = [
+            ('context_id', SensitivityLevel.CRITICAL, 
+             r'(\d{7,9})', r'[\s:״"]*(?:תעודת\s+זהות|ת\.?ז\.?|מספר\s+זהות|מס[\'"]?\s*זהות)'),
+            ('context_personal_num', SensitivityLevel.CRITICAL, 
+             r'(\d{5,9})', r'[\s:״"]*(?:מספר\s+אישי|מס[\'"]?\s*אישי|מ\.?א\.?)'),
+            ('context_name', SensitivityLevel.HIGH, 
+             r'([א-ת]{2,15})', r'[\s:״"]*(?:שם\s+פרטי|שם\s+משפחה|שם\s+מלא)'),
+            ('context_bank', SensitivityLevel.CRITICAL, 
+             r'(\d{6,14})', r'[\s:״"]*(?:חשבון\s+בנק|מספר\s+חשבון|ח[./]ב)'),
+        ]
+
         # ─── מילות מפתח רגישות (הקשר בלבד, לא ערך ספציפי) ───────
         self.sensitive_keywords = {
             'medical': {
@@ -344,18 +413,19 @@ class BasicPIIDetector:
     @trace_execution
     def detect_context_keywords(self, text: str) -> List[PIIMatch]:
         """
-        מחפש מילות מפתח כמו 'תעודת זהות:' ותופס את הערך שאחריהן.
+        מחפש מילות מפתח כמו 'תעודת זהות:' ותופס את הערך שאחריהן,
+        או מחפש ערך ואז מילת מפתח (כמו בטבלאות).
         """
         matches = []
+        
+        # 1. מילת מפתח ואז ערך (תעודת זהות: 123)
         for kw_pattern, category, sensitivity, val_pattern in self.context_keywords:
             full_pattern = kw_pattern + val_pattern
             try:
                 for m in re.finditer(full_pattern, text, re.IGNORECASE | re.UNICODE):
-                    # קבוצה 1 = הערך שנתפס
                     value = m.group(1).strip() if m.lastindex and m.group(1) else m.group().strip()
                     if not value:
                         continue
-                    # מיקום הערך בטקסט
                     value_start = m.start(1) if m.lastindex else m.start()
                     value_end = m.end(1) if m.lastindex else m.end()
                     matches.append(PIIMatch(
@@ -368,6 +438,28 @@ class BasicPIIDetector:
                     ))
             except Exception as e:
                 logger.warning(f"Error in context keyword {category}: {e}")
+                
+        # 2. ערך ואז מילת מפתח (123 תעודת זהות)
+        for category, sensitivity, val_pattern, kw_suffix in self.context_kw_suffix_patterns:
+            full_pattern = val_pattern + kw_suffix
+            try:
+                for m in re.finditer(full_pattern, text, re.IGNORECASE | re.UNICODE):
+                    value = m.group(1).strip() if m.lastindex and m.group(1) else m.group().strip()
+                    if not value:
+                        continue
+                    value_start = m.start(1) if m.lastindex else m.start()
+                    value_end = m.end(1) if m.lastindex else m.end()
+                    matches.append(PIIMatch(
+                        text=value,
+                        category=category,
+                        start_pos=value_start,
+                        end_pos=value_end,
+                        confidence=0.95,
+                        sensitivity=sensitivity
+                    ))
+            except Exception as e:
+                logger.warning(f"Error in context suffix {category}: {e}")
+                
         logger.debug(f"🔑 Found {len(matches)} Context findings")
         return matches
 

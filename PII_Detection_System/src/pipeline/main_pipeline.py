@@ -109,6 +109,117 @@ class PIIPipeline:
         logger.info(f"✅ After dedup: {len(extracted_entities)} unique entities")
 
         # ── 4. שמור רק Presidio results תואמים לאנונימיזציה ───────
+"""
+Main Pipeline — PII Detection System
+אורכסטרטור ראשי לזיהוי PII עם AI.
+
+שיפורים:
+  - Overlap dedup (בנוסף ל-exact-span)
+  - Context keyword post-processing
+  - לוגים לכל שלב
+"""
+
+import json
+from typing import Dict, Any
+
+from .file_handler import FileHandler
+from .pii_detector import PIIDetector
+from .decision_engine import DecisionEngine
+
+try:
+    from src.logger_config import get_logger
+except ImportError:
+    try:
+        from logger_config import get_logger
+    except ImportError:
+        import logging
+        def get_logger(name):
+            logging.basicConfig(level=logging.INFO)
+            return logging.getLogger(name)
+        def trace_execution(func): return func
+
+try:
+    from src.logger_config import trace_execution
+except ImportError:
+    try:
+        from logger_config import trace_execution
+    except ImportError:
+        def trace_execution(func): return func
+
+logger = get_logger("PII.Pipeline.Main")
+
+
+class PIIPipeline:
+    """
+    אורכסטרטור ראשי לזיהוי PII מבוסס AI.
+    """
+
+    def __init__(self):
+        logger.info("🚀 Initializing PIIPipeline...")
+        self.file_handler   = FileHandler()
+        self.detector       = PIIDetector()
+        self.decision_engine = DecisionEngine()
+        logger.info("✅ PIIPipeline ready")
+
+    @trace_execution
+    def process_file(
+        self,
+        file_path: str = None,
+        file_bytes: bytes = None,
+        filename: str = None
+    ) -> Dict[str, Any]:
+        """
+        עיבוד File: חילוץ טקסט → זיהוי PII → הערכת סיכון → אנונימיזציה.
+        """
+        logger.info(f"📂 Starting processing file: {filename or file_path or 'bytes'}")
+
+        # ── 1. חילוץ טקסט ─────────────────────────────────────────
+        extraction_result = self.file_handler.process_file(
+            file_path=file_path, file_bytes=file_bytes, filename=filename
+        )
+        if not extraction_result["success"]:
+            error_msg = extraction_result.get("error", "Failed to extract text.")
+            logger.error(f"❌ Text extraction failed: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+        original_text = extraction_result["text"]
+        file_type     = extraction_result.get("file_type", "unknown")
+        logger.info(f"📄 Text extracted | {len(original_text)} characters | Type: {file_type}")
+
+        # ── 2. זיהוי PII (Presidio + Context) ────────────────────
+        MIN_CONFIDENCE = 0.4
+
+        # Presidio analyzer results (לאנונימיזציה)
+        presidio_results = self.detector.analyzer.analyze(
+            text=original_text, entities=[], language="en"
+        )
+
+        # Format Presidio
+        presidio_entities = [{
+            "entity_type": r.entity_type,
+            "start": r.start,
+            "end": r.end,
+            "score": r.score,
+            "text": original_text[r.start:r.end],
+            "source": "presidio"
+        } for r in presidio_results if r.score >= MIN_CONFIDENCE]
+
+        # Context keywords
+        context_entities = self.detector.detect_context_keywords(original_text)
+        context_entities = [e for e in context_entities if e["score"] >= MIN_CONFIDENCE]
+
+        logger.info(
+            f"🔍 Presidio raw: {len(presidio_entities)} | "
+            f"Context: {len(context_entities)}"
+        )
+
+        # ── 3. Overlap Dedup ──────────────────────────────────────
+        all_entities = presidio_entities + context_entities
+        extracted_entities = PIIDetector._overlap_dedup(all_entities)
+
+        logger.info(f"✅ After dedup: {len(extracted_entities)} unique entities")
+
+        # ── 4. שמור רק Presidio results תואמים לאנונימיזציה ───────
         keep_spans = {(e["start"], e["end"]) for e in extracted_entities if e.get("source") == "presidio"}
         analyzer_results_filtered = [
             r for r in presidio_results
@@ -128,6 +239,7 @@ class PIIPipeline:
             "success":              True,
             "file_type":            file_type,
             "original_text_length": len(original_text),
+            "original_text":        original_text,
             "risk_evaluation":      evaluation,
             "entities":             extracted_entities,
             "anonymized_text":      anonymized_text,

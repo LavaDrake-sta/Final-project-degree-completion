@@ -173,3 +173,61 @@ class ImageRedactor:
         except Exception as e:
             self.logger.error(f"❌ Error redacting image: {e}")
             return None
+
+    @trace_execution
+    def redact_image_by_coords(
+        self,
+        image_data: Union[str, bytes, Image.Image],
+        findings: List[dict],
+        output_path: Optional[str] = None,
+        fill_color: tuple = (0, 0, 0)
+    ) -> Union[bytes, str, None]:
+        """
+        השחרת תמונה by coordinates מדויקות (מלבנים).
+        מאפשר השחרה על בסיס משורטט או מלבנים שחולצו ספציפית.
+        """
+        if not findings:
+            self.logger.warning("⚠️ No locations received for redaction, operation cancelled.")
+            return None
+
+        try:
+            # טעינת התמונה
+            if isinstance(image_data, Image.Image):
+                image = image_data.copy()
+            elif isinstance(image_data, str):
+                image = Image.open(image_data)
+            else:
+                image = Image.open(io.BytesIO(image_data))
+
+            if image.mode not in ('RGB', 'RGBA'):
+                image = image.convert('RGB')
+
+            self.logger.info(f"🔒 Starting image redaction by {len(findings)} exact coordinates.")
+
+            draw = ImageDraw.Draw(image)
+            total_redactions = 0
+            
+            for finding in findings:
+                rect_coords = finding.get('rect')
+                if rect_coords and len(rect_coords) == 4:
+                    x1, y1, x2, y2 = rect_coords
+                    padding = 0
+                    draw.rectangle(
+                        [x1 - padding, y1 - padding, x2 + padding, y2 + padding],
+                        fill=fill_color
+                    )
+                    total_redactions += 1
+
+            self.logger.info(f"✅ Visual image redaction finished successfully. Performed {total_redactions} redactions.")
+
+            if output_path:
+                image.save(output_path)
+                return output_path
+            else:
+                output = io.BytesIO()
+                image.save(output, format='PNG')
+                return output.getvalue()
+
+        except Exception as e:
+            self.logger.error(f"❌ Error redacting image by coordinates: {e}")
+            return None

@@ -199,16 +199,7 @@ def load_all_engines_v3():
             ai_error = str(e)
     return detector, image_proc, pdf_proc, word_proc, excel_proc, ai_pipeline, ai_error
 
-@st.cache_resource(show_spinner="⏳ טוען מנוע זיהוי תמונות (OCR), ייתכן שייקח מעט זמן בפעם הראשונה...")
-@trace_execution
-def load_ocr_engine():
-    try:
-        import easyocr  # type: ignore
-        # False for GPU since we are assuming standard local deployment without CUDA setup
-        return easyocr.Reader(['he', 'en'], gpu=False)
-    except Exception as e:
-        print(f"EasyOCR Error: {e}")
-        return None
+# load_ocr_engine removed. Tesseract is used directly.
 
 detector, image_processor, pdf_processor, word_processor, excel_processor, ai_pipeline, _ai_error = load_all_engines_v3()
 
@@ -280,7 +271,7 @@ def sensitivity_icon(name: str) -> str:
 
 
 @trace_execution
-def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, original_text: str = ""):
+def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, original_text: str = "", unique_key: str = ""):
     """
     הצג טבלת תצוגה מקדימה של ממצאי PII עם checkbox לכל שורה.
     לאחר בחירה — לחצן השחרה שמוריד את הFile המושחר.
@@ -305,27 +296,64 @@ def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, or
     st.subheader(f"🔍 נמצאו {len(entities)} פריטים (ניתן להוסיף ידנית) — בחר מה להשחיר")
     st.caption("סמן ✅ את הfindings שברצונך להשחיר בFile הסופי, ואז לחץ 'בצע השחרה'.")
 
-    edited_df = st.data_editor(
-        df,
-        column_config={
-            "השחר?": st.column_config.CheckboxColumn("השחר?", default=True),
-            "#":      st.column_config.NumberColumn("#", width="small"),
-            "טקסט":    st.column_config.TextColumn("טקסט", required=True),
-        },
-        use_container_width=True,
-        hide_index=True,
-        num_rows="dynamic",
-        key=f"preview_{filename}"
-    )
+    main_col1, main_col2 = st.columns([1, 1.2])
 
-    # ─── סיכום בחירה ───────────────────────────────────────────────
-    selected_texts = edited_df[edited_df["השחר?"] == True]["טקסט"].tolist()
-    total_selected = len(selected_texts)
+    with main_col1:
+        st.markdown("**רשימת findings (טבלה לבחירה):**")
+        edited_df = st.data_editor(
+            df,
+            column_config={
+                "השחר?": st.column_config.CheckboxColumn("השחר?", default=True),
+                "#":      st.column_config.NumberColumn("#", width="small"),
+                "טקסט":    st.column_config.TextColumn("טקסט", required=True),
+            },
+            use_container_width=True,
+            hide_index=True,
+            num_rows="dynamic",
+            key=f"preview_{unique_key}_{filename}"
+        )
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("סה״כ findings", len(entities))
-    col2.metric("נבחרו להשחרה", total_selected)
-    col3.metric("יישארו גלויים", len(entities) - total_selected)
+        # ─── סיכום בחירה ───────────────────────────────────────────────
+        selected_texts = edited_df[edited_df["השחר?"] == True]["טקסט"].tolist()
+        total_selected = len(selected_texts)
+
+        sub_col1, sub_col2, sub_col3 = st.columns(3)
+        sub_col1.metric("סה״כ", len(entities))
+        sub_col2.metric("נבחרו", total_selected)
+        sub_col3.metric("יישארו", len(entities) - total_selected)
+
+    with main_col2:
+        st.markdown("**תצוגת המסמך:**")
+        if ext in ("docx", "xlsx"):
+            cache_key = f"visual_preview_{filename}"
+            if cache_key not in st.session_state:
+                with st.spinner("מייצר תצוגה ויזואלית מקדימה (המתן מעט)..."):
+                    try:
+                        from src.utils.pdf_converter import convert_office_to_pdf, get_highlighted_images_from_pdf
+                        pdf_bytes = convert_office_to_pdf(file_bytes, ext)
+                        images = get_highlighted_images_from_pdf(pdf_bytes, entities)
+                        st.session_state[cache_key] = images
+                    except Exception as e:
+                        st.error(f"שגיאה ביצירת תצוגה ויזואלית: {e}")
+                        st.session_state[cache_key] = []
+                        
+            images = st.session_state.get(cache_key, [])
+            if images:
+                for idx, img_bytes in enumerate(images):
+                    st.image(img_bytes, caption=f"עמוד {idx+1}", use_column_width=True)
+            else:
+                # Fallback to text
+                if original_text:
+                    st.text_area("תוכן המסמך (קריאה בלבד)", original_text, height=400, disabled=True, key=f"text_preview_{unique_key}_{filename}")
+                else:
+                    st.info("לא סופק טקסט לתצוגה מקדימה במצב זה.")
+        else:
+            if original_text:
+                st.text_area("תוכן המסמך (קריאה בלבד)", original_text, height=400, disabled=True, key=f"text_preview_{unique_key}_{filename}")
+            else:
+                st.info("לא סופק טקסט לתצוגה מקדימה במצב זה.")
+
+    st.markdown("---")
 
     if total_selected == 0:
         st.info("לא נבחרו findings להשחרה.")
@@ -337,9 +365,9 @@ def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, or
         return
 
     # ─── מפתח session_state ייחודי לכל קובץ ────────────────────────
-    dl_key = f"redact_result_{filename}"
+    dl_key = f"redact_result_{unique_key}_{filename}"
 
-    if st.button(f"🖊️ בצע השחרה ({total_selected} פריטים)", type="primary", key=f"do_redact_{filename}"):
+    if st.button(f"🖊️ בצע השחרה ({total_selected} פריטים)", type="primary", key=f"do_redact_{unique_key}_{filename}"):
         with st.spinner("מבצע השחרה על הFile..."):
             redacted_bytes = None
             mime = "application/octet-stream"
@@ -406,7 +434,7 @@ def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, or
             data=res["bytes"],
             file_name=res["name"],
             mime=res["mime"],
-            key=f"dl_btn_{filename}",
+            key=f"dl_btn_{unique_key}_{filename}",
         )
 
 
@@ -426,12 +454,11 @@ def basic_matches_to_preview(matches, min_confidence: float = 0.4) -> list:
 # ═══════════════════════════════════════════════════════════════════
 # TABS
 # ═══════════════════════════════════════════════════════════════════
-tab_img, tab_word, tab_excel, tab_pdf, tab_ai = st.tabs([
+tab_img, tab_word, tab_excel, tab_pdf = st.tabs([
     "🖼️  תמונה",
     "📝  Word",
     "📊  Excel",
-    "📄  PDF",
-    "🤖  AI Pipeline"
+    "📄  PDF"
 ])
 
 @trace_execution
@@ -443,13 +470,35 @@ def process_image_visual(image_bytes: bytes, detector_engine, use_ai: bool, ai_p
     import numpy as np
     from PIL import Image, ImageDraw
     
-    ocr_engine = load_ocr_engine()
-    if not ocr_engine:
+    if not TESSERACT_OK:
         return [], image_bytes
         
     img = Image.open(io.BytesIO(image_bytes))
-    img_array = np.array(img)
-    ocr_results = ocr_engine.readtext(img_array)
+    
+    # המרה ל-RGB עם רקע לבן כדי לפתור בעיית PNG שקוף במצב Dark Mode
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.convert('RGBA').split()[3])
+        img = bg
+    else:
+        img = img.convert('RGB')
+        
+    # הפעלת Tesseract וקבלת נתונים עם קואורדינטות
+    data = pytesseract.image_to_data(img, lang='heb+eng', output_type=pytesseract.Output.DICT)
+    
+    ocr_results = []
+    for i in range(len(data['text'])):
+        text = data['text'][i].strip()
+        if not text:
+            continue
+        conf = float(data['conf'][i]) / 100.0
+        x = data['left'][i]
+        y = data['top'][i]
+        w = data['width'][i]
+        h = data['height'][i]
+        # יצירת קואורדינטות בסגנון easyocr: [top_left, top_right, bottom_right, bottom_left]
+        bbox = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+        ocr_results.append((bbox, text, conf))
     
     findings = []
     # יצירת עותק לציור
@@ -465,15 +514,15 @@ def process_image_visual(image_bytes: bytes, detector_engine, use_ai: bool, ai_p
             rep = ai_pipeline_engine.process_file(file_bytes=snippet_text.encode('utf-8', errors='ignore'), filename="dummy.txt")
             if rep.get("success") and "entities" in rep:
                 snippet_findings = rep["entities"]
-        else:
-            res = detector_engine.analyze_text(snippet_text)
-            for match in res.get("matches", []):
-                if match.confidence >= 0.3:
-                    snippet_findings.append({
-                        "text": match.text,
-                        "entity_type": match.category,
-                        "score": match.confidence,
-                    })
+        # Always run basic regex
+        res = detector_engine.analyze_text(snippet_text)
+        for match in res.get("matches", []):
+            if match.confidence >= 0.3:
+                snippet_findings.append({
+                    "text": match.text,
+                    "entity_type": match.category,
+                    "score": match.confidence,
+                })
         
         if snippet_findings:
             # קואורדינטות (xmin, ymin, xmax, ymax)
@@ -524,23 +573,120 @@ with tab_img:
                     st.session_state["img_name"] = uploaded.name
 
             if "img_visual_preview" in st.session_state and st.session_state.get("img_name") == uploaded.name:
-                col1, col2 = st.columns([1.2, 1])
+                st.divider()
                 
-                with col1:
-                    st.subheader("👀 תצוגה מקדימה")
-                    st.image(st.session_state["img_visual_preview"], use_column_width=True)
+                findings = st.session_state["img_visual_findings"]
                 
-                with col2:
-                    st.subheader("📋 findings")
-                    entities = st.session_state["img_visual_findings"]
-                    if entities:
-                        show_preview_and_redact(
-                            entities,
-                            st.session_state["img_bytes"],
-                            st.session_state["img_name"]
-                        )
+                st.subheader("👀 תצוגה מקדימה ובחירת השחרה")
+                st.write("סמן בטבלה אילו אזורים להשחיר, או שרטט בעכבר מלבנים ישירות על התמונה.")
+                
+                st.markdown("### 🖼️ תצוגת המסמך")
+                st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
+                
+                from streamlit_drawable_canvas import st_canvas
+                from PIL import Image
+                import io
+                
+                bg_image = Image.open(io.BytesIO(st.session_state["img_visual_preview"]))
+                
+                canvas_res = st_canvas(
+                    fill_color="rgba(0, 0, 0, 1)",
+                    stroke_width=2,
+                    stroke_color="rgba(255, 0, 0, 1)",
+                    background_image=bg_image,
+                    update_streamlit=True,
+                    height=bg_image.height,
+                    width=bg_image.width,
+                    drawing_mode="rect",
+                    display_toolbar=False,
+                    key=f"canvas_img_{uploaded.name}",
+                )
+                
+                st.divider()
+                
+                st.markdown("### 📋 רשימת findings אוטומטיים")
+                if not findings:
+                    st.info("לא זוהו אוטומטית ממצאים להשחרה. באפשרותך להוסיף טקסט להשחרה ידנית או לצייר מלבנים על המסמך.")
+                    df = pd.DataFrame(columns=["השחר?", "טקסט", "סוג"])
+                    df["השחר?"] = df["השחר?"].astype(bool)
+                else:
+                    df = pd.DataFrame([{
+                        "השחר?": True,
+                        "טקסט": f.get("text", ""),
+                        "סוג": translate_entity(f.get("type", "")),
+                    } for f in findings])
+                
+                edited_df = st.data_editor(
+                    df,
+                    column_config={
+                        "השחר?": st.column_config.CheckboxColumn("השחר?", default=True),
+                        "טקסט": st.column_config.TextColumn("טקסט", required=True),
+                    },
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="dynamic",
+                    key=f"img_preview_{uploaded.name}"
+                )
+                selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()
+                
+                for idx in selected_indices:
+                    if idx >= len(findings):
+                        row = edited_df.loc[idx]
+                        if row["טקסט"]:
+                            findings.append({
+                                "text": row["טקסט"],
+                                "type": "MANUAL",
+                            })
+                            
+                st.markdown("---")
+                if st.button("🖊️ בצע השחרה מדויקת", type="primary", key="btn_redact_img"):
+                    if not REDACTORS_AVAILABLE:
+                        st.error("❌ מנוע ההשחרה חסר, לא ניתן להשחיר.")
                     else:
-                        st.success("✅ לא נמצא מידע רגיש בתמונה.")
+                        with st.spinner("מבצע השחרה פיזית (מלבנים שחורים)..."):
+                            selected_findings = []
+                            if findings:
+                                selected_findings.extend([findings[i] for i in selected_indices])
+                            
+                            if canvas_res is not None and canvas_res.json_data is not None:
+                                for obj in canvas_res.json_data.get("objects", []):
+                                    if obj.get("type") == "rect":
+                                        x0 = obj["left"]
+                                        y0 = obj["top"]
+                                        x1 = x0 + obj["width"] * obj["scaleX"]
+                                        y1 = y0 + obj["height"] * obj["scaleY"]
+                                        
+                                        selected_findings.append({
+                                            "rect": [x0, y0, x1, y1]
+                                        })
+                            
+                            if not selected_findings:
+                                st.warning("לא סומנו אזורים להשחרה.")
+                            else:
+                                redactor = ImageRedactor()
+                                redacted_bytes = redactor.redact_image_by_coords(st.session_state["img_bytes"], selected_findings)
+                                
+                                if redacted_bytes:
+                                    st.session_state["img_ready_for_download"] = True
+                                    st.session_state["img_redacted_bytes"] = redacted_bytes
+                                    st.session_state["img_out_name"] = f"redacted_{uploaded.name}"
+                                    st.experimental_rerun()
+                                else:
+                                    st.error("❌ שגיאה ביצירת התמונה המושחרת.")
+                
+                if st.session_state.get("img_ready_for_download") and st.session_state.get("img_redacted_bytes"):
+                    st.success("✅ ההשחרה הושלמה בהצלחה!")
+                    import base64
+                    b64 = base64.b64encode(st.session_state["img_redacted_bytes"]).decode()
+                    href = f'''
+                    <a href="data:application/octet-stream;base64,{b64}" download="{st.session_state["img_out_name"]}" 
+                       style="display: inline-block; padding: 0.5em 1em; color: white; background-color: #6c63ff; 
+                              border-radius: 5px; text-decoration: none; font-weight: bold; border: 1px solid #5a52d5;">
+                       ⬇️ הורד תמונה מושחרת (הורדה ישירה)
+                    </a>
+                    <br><br>
+                    '''
+                    st.markdown(href, unsafe_allow_html=True)
 
 # ────────────────────────────────────────────────────────────────────
 # TAB 2 — Word
@@ -559,7 +705,7 @@ with tab_word:
                     rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
                     if rep["success"]:
                         entities = ai_entities_to_preview(rep["entities"])
-                        text = rep.get("anonymized_text", "")
+                        text = rep.get("original_text", rep.get("anonymized_text", ""))
                     else:
                         st.error(f"❌ {rep.get('error')}")
                         entities = []
@@ -575,19 +721,19 @@ with tab_word:
                         entities = []
                         text = ""
 
-            if text:
-                with st.expander("📝 תוכן המסמך"):
-                    st.text(text[:2000] + ("..." if len(text) > 2000 else ""))
             st.session_state["word_entities"] = entities
             st.session_state["word_bytes"]    = raw
             st.session_state["word_name"]     = uploaded.name
+            st.session_state["word_text"]     = text
 
         if "word_entities" in st.session_state and st.session_state.get("word_name") == uploaded.name:
             st.divider()
             show_preview_and_redact(
                 st.session_state["word_entities"],
                 st.session_state["word_bytes"],
-                st.session_state["word_name"]
+                st.session_state["word_name"],
+                original_text=st.session_state.get("word_text", ""),
+                unique_key="word"
             )
 
 # ────────────────────────────────────────────────────────────────────
@@ -607,7 +753,7 @@ with tab_excel:
                     rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
                     if rep["success"]:
                         entities = ai_entities_to_preview(rep["entities"])
-                        text = rep.get("anonymized_text", "")
+                        text = rep.get("original_text", rep.get("anonymized_text", ""))
                     else:
                         st.error(f"❌ {rep.get('error')}")
                         entities = []
@@ -623,35 +769,40 @@ with tab_excel:
                         entities = []
                         text = ""
 
-            if text:
-                with st.expander("📝 תוכן הFile"):
-                    st.text(text[:2000] + ("..." if len(text) > 2000 else ""))
             st.session_state["excel_entities"] = entities
             st.session_state["excel_bytes"]    = raw
             st.session_state["excel_name"]     = uploaded.name
+            st.session_state["excel_text"]     = text
+            st.session_state["excel_bytes"]    = raw
+            st.session_state["excel_name"]     = uploaded.name
+            st.session_state["excel_text"]     = text
 
         if "excel_entities" in st.session_state and st.session_state.get("excel_name") == uploaded.name:
             st.divider()
             show_preview_and_redact(
                 st.session_state["excel_entities"],
                 st.session_state["excel_bytes"],
-                st.session_state["excel_name"]
+                st.session_state["excel_name"],
+                original_text=st.session_state.get("excel_text", ""),
+                unique_key="excel"
             )
 
 # ────────────────────────────────────────────────────────────────────
 @trace_execution
-def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipeline_engine=None, force_ocr: bool = False):
+def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipeline_engine=None):
     """
-    סורק PDF Page עמוד, מחלץ קואורדינטות של מידע רגיש,
-    ומייצר תמונות של העמודים עם סימוני השחרה ויזואליים.
-    כולל לוגיקה מרחבית (Spatial) לקישור כותרות לערכים.
+    סורק PDF, מחלץ קואורדינטות של מידע רגיש, ומייצר תמונות להשחרה.
+    תומך בצורה אחידה במסמכים רגילים ובמסמכים סרוקים (OCR).
     """
     import fitz
+    from PIL import Image
+    import io
+    
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     findings = []
     page_images = []
     
-    # מילות מפתח לחיפוש מרחבי (כותרת -> סוג ישות)
+    # מילות מפתח לחיפוש מרחבי
     SPATIAL_LABELS = {
         "מספר אישי": "IL_PERSONAL_NUMBER",
         "מ.א.": "IL_PERSONAL_NUMBER",
@@ -667,237 +818,132 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
         log_progress(page_num + 1, len(doc), "Visual PDF Scan")
         page = doc[page_num]
         text = page.get_text()
-        words = page.get_text("words")  # (x0, y0, x1, y1, word, block_no, line_no, word_no)
         
+        # האם להשתמש ב-OCR?
+        readable_chars = sum(1 for c in text if c.isascii() and c.isprintable() or 0x0590 <= ord(c) <= 0x05FF or c.isdigit())
+        should_ocr = len(text.strip()) < 50 or not (readable_chars > 30)
+        
+        words = [] # יכיל: (x0, y0, x1, y1, text)
+        
+        if should_ocr and TESSERACT_OK:
+            import pytesseract
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+            img = Image.open(io.BytesIO(pix.tobytes()))
+            data = pytesseract.image_to_data(img, lang='heb+eng', output_type=pytesseract.Output.DICT)
+            for i in range(len(data['text'])):
+                txt = data['text'][i].strip()
+                if txt:
+                    # Tesseract רץ על פי 2 מהגודל המקורי, נחלק ב-2
+                    x = data['left'][i] / 2.0
+                    y = data['top'][i] / 2.0
+                    w = data['width'][i] / 2.0
+                    h = data['height'][i] / 2.0
+                    words.append((x, y, x + w, y + h, txt))
+        else:
+            for w in page.get_text("words"):
+                words.append((w[0], w[1], w[2], w[3], w[4]))
+                
         page_findings = []
         
-        # זיהוי אם להשתמש ב-OCR: אם המשתמש ביקש, או אם אין כמעט טקסט
-        # גם אם יש טקסט, בדוק אם הוא קריא (לא mojibake עברי)
-        readable_chars = sum(1 for c in text if c.isascii() and c.isprintable() or 0x0590 <= ord(c) <= 0x05FF or c.isdigit())
-        text_is_readable = readable_chars > 30
-        should_ocr = force_ocr or len(text.strip()) < 50 or not text_is_readable
-        
-        ocr_engine = load_ocr_engine() if should_ocr else None
-        
-        if should_ocr and ocr_engine:
-            if ocr_engine:
-                import io
-                import numpy as np
-                from PIL import Image
-                pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
-                img = Image.open(io.BytesIO(pix.tobytes()))
-                img_array = np.array(img)
-                ocr_results = ocr_engine.readtext(img_array)
-                
-                for bbox, snippet_text, conf in ocr_results:
-                    if not snippet_text.strip(): continue
-                    
-                    snippet_findings = []
-                    if use_ai and ai_pipeline_engine:
-                        rep = ai_pipeline_engine.process_file(file_bytes=snippet_text.encode('utf-8', errors='ignore'), filename="dummy.txt")
-                        if rep.get("success") and "entities" in rep:
-                            snippet_findings = rep["entities"]
-                    else:
-                        res = detector_engine.analyze_text(snippet_text)
-                        for match in res.get("matches", []):
-                            if match.confidence >= 0.3:
-                                snippet_findings.append({
-                                    "text": match.text,
-                                    "entity_type": match.category,
-                                    "score": match.confidence,
-                                })
-                                
-                    x_coords = [p[0]/2.0 for p in bbox]
-                    y_coords = [p[1]/2.0 for p in bbox]
-                    rect = [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
-                    
-                    for sf in snippet_findings:
-                        page_findings.append({
-                            "page": page_num,
-                            "rect": rect,
-                            "text": sf.get("text", snippet_text),
-                            "type": sf.get("entity_type", sf.get("type", "PII")),
-                            "score": sf.get("score", conf),
-                            "id": f"ocr_{page_num}_{rect[0]}_{rect[1]}"
-                        })
-        else:
-            # לוגיקה מרחבית (Spatial) - חיפוש כותרות וערכים קרובים
-            # words כבר נטען למעלה
+        # 1. לוגיקה מרחבית (Spatial) - חיפוש לפי כותרות
+        for word_data in words:
+            w_text = word_data[4]
+            w_rect = fitz.Rect(word_data[:4])
             
-            # 1. איתור כותרות
-            for word_data in words:
-                w_text = word_data[4]
-                w_rect = fitz.Rect(word_data[:4])
-                
-                label_type = None
-                for lab, l_type in SPATIAL_LABELS.items():
-                    if lab in w_text or lab[::-1] in w_text:
-                        label_type = l_type
-                        break
-                
-                if label_type:
-                    # מצאנו כותרת! נחפש מספרים/שמות מעליה או לידה
-                    # נחפש ברדיוס של 50 פיקסלים
-                    search_area = w_rect + (-50, -60, 50, 10) # חיפוש בעיקר מעל
-                    for other_word in words:
-                        o_text = other_word[4]
-                        o_rect = fitz.Rect(other_word[:4])
-                        if o_rect.intersects(search_area) and o_text != w_text:
-                            # אם זה נראה כמו ערך (מספר או טקסט עברי)
-                            is_val = any(c.isdigit() for c in o_text) or any(0x0590 <= ord(c) <= 0x05FF for c in o_text)
-                            if is_val and len(o_text) >= 2:
-                                page_findings.append({
-                                    "page": page_num,
-                                    "rect": [o_rect.x0, o_rect.y0, o_rect.x1, o_rect.y1],
-                                    "text": o_text,
-                                    "type": label_type,
-                                    "score": 0.99, # ודאות גבוהה בגלל ההקשר המרחבי
-                                    "id": f"spatial_{page_num}_{o_rect.x0}_{o_rect.y0}"
-                                })
-
-            # 2. זיהוי רגיל (NLP/Regex) על כל הטקסט
-            if use_ai and ai_pipeline_engine:
-                rep = ai_pipeline_engine.process_file(file_bytes=text.encode('utf-8', errors='ignore'), filename="dummy.txt")
-                if rep.get("success") and "entities" in rep:
-                    for e in rep["entities"]:
-                        entity_text = e.get("text", "")
-                        if not entity_text.strip(): continue
-                        
-                        # חיפוש קואורדינטות (כולל חיפוש הפוך לעברית)
-                        search_texts = [entity_text]
-                        if any(0x0590 <= ord(c) <= 0x05FF for c in entity_text):
-                            search_texts.append(entity_text[::-1])
-                            
-                        for s_text in search_texts:
-                            for area in page.search_for(s_text):
-                                page_findings.append({
-                                    "page": page_num,
-                                    "rect": [area.x0, area.y0, area.x1, area.y1],
-                                    "text": entity_text,
-                                    "type": e.get("entity_type", "PII"),
-                                    "score": e.get("score", 0.8),
-                                    "id": f"{page_num}_{area.x0}_{area.y0}"
-                                })
-            else:
-                # --- שיטה 1: זיהוי על הטקסט המלא ---
-                all_matches = []
-                
-                # זיהוי על הטקסט כמו שהוא (word-scan יטפל בHTF RTL)
-                res = detector_engine.analyze_text(text)
-                all_matches.extend(res.get("matches", []))
-                
-                # --- שיטה 2: זיהוי מילה-מילה (גיבוי לPDF עם encoding שבור) ---
-                # מאחד מילים סמוכות לקבוצות של עד 5 מילים ומריץ detection
-                word_texts_with_rects = []
-                for i in range(len(words)):
-                    # אוסף חלונות של מילים (1 עד 5)
-                    for window in range(1, 6):
-                        if i + window > len(words):
-                            break
-                        chunk_words = words[i:i+window]
-                        chunk_text = " ".join(w[4] for w in chunk_words)
-                        chunk_rect = fitz.Rect(chunk_words[0][:4])
-                        for w in chunk_words[1:]:
-                            chunk_rect |= fitz.Rect(w[:4])
-                        word_texts_with_rects.append((chunk_text, chunk_rect))
-                
-                # הרצת זיהוי על כל חלון מילים
-                seen_word_matches = set()
-                for chunk_text, chunk_rect in word_texts_with_rects:
-                    chunk_res = detector_engine.analyze_text(chunk_text)
-                    for match in chunk_res.get("matches", []):
-                        if match.confidence >= 0.4 and match.text not in seen_word_matches:
-                            seen_word_matches.add(match.text)
+            label_type = None
+            for lab, l_type in SPATIAL_LABELS.items():
+                if lab in w_text or lab[::-1] in w_text:
+                    label_type = l_type
+                    break
+            
+            if label_type:
+                # מצאנו כותרת, נחפש מעליה או מתחתיה
+                search_area = w_rect + (-50, -60, 50, 10)
+                for other_word in words:
+                    o_text = other_word[4]
+                    o_rect = fitz.Rect(other_word[:4])
+                    if o_rect.intersects(search_area) and o_text != w_text:
+                        is_val = any(c.isdigit() for c in o_text) or any(0x0590 <= ord(c) <= 0x05FF for c in o_text)
+                        if is_val and len(o_text) >= 2:
                             page_findings.append({
                                 "page": page_num,
-                                "rect": [chunk_rect.x0, chunk_rect.y0, chunk_rect.x1, chunk_rect.y1],
-                                "text": match.text,
-                                "type": match.category,
-                                "score": match.confidence,
-                                "id": f"{page_num}_{chunk_rect.x0}_{chunk_rect.y0}_{match.category}_word"
+                                "rect": [o_rect.x0, o_rect.y0, o_rect.x1, o_rect.y1],
+                                "text": o_text,
+                                "type": label_type,
+                                "score": 0.99,
+                                "id": f"spatial_{page_num}_{o_rect.x0}_{o_rect.y0}"
                             })
+
+        # 2. זיהוי טקסט מלא (Regex + AI)
+        full_text = " ".join([w[4] for w in words])
+        all_entities = []
+        
+        # תמיד מריצים Regex
+        res = detector_engine.analyze_text(full_text)
+        for match in res.get("matches", []):
+            if match.confidence >= 0.3:
+                all_entities.append({"text": match.text, "type": match.category, "score": match.confidence})
                 
-                # --- עיבוד תוצאות שיטה 1 + מציאת קואורדינטות ---
-                seen_fulltext = set()
-                for match in all_matches:
-                    if match.confidence < 0.4:
-                        continue
-                    entity_text = match.text
-                    if entity_text in seen_fulltext:
-                        continue
-                    seen_fulltext.add(entity_text)
+        # אם AI מופעל
+        if use_ai and ai_pipeline_engine:
+            rep = ai_pipeline_engine.process_file(file_bytes=full_text.encode('utf-8', errors='ignore'), filename="dummy.txt")
+            if rep.get("success") and "entities" in rep:
+                for e in rep["entities"]:
+                    all_entities.append({"text": e.get("text", ""), "type": e.get("entity_type", "PII"), "score": e.get("score", 0.8)})
                     
-                    # אם כבר נמצא דרך word scan, דלג
-                    if entity_text in seen_word_matches:
-                        continue
-                    
-                    search_texts = [entity_text]
-                    if any(0x0590 <= ord(c) <= 0x05FF for c in entity_text):
-                        search_texts.append(entity_text[::-1])
-                        
-                    found_any = False
-                    for s_text in search_texts:
-                        found_areas = page.search_for(s_text)
-                        if found_areas:
-                            found_any = True
-                            for area in found_areas:
-                                page_findings.append({
-                                    "page": page_num,
-                                    "rect": [area.x0, area.y0, area.x1, area.y1],
-                                    "text": entity_text,
-                                    "type": match.category,
-                                    "score": match.confidence,
-                                    "id": f"{page_num}_{area.x0}_{area.y0}_{match.category}"
-                                })
-                    
-                    # Fallback: word-window search
-                    if not found_any:
-                        clean_target = "".join(entity_text.split())
-                        for i in range(len(words)):
-                            combined = ""
-                            rect = None
-                            for j in range(i, min(i + 8, len(words))):
-                                w_text = "".join(words[j][4].split())
-                                combined += w_text
-                                w_rect = fitz.Rect(words[j][:4])
-                                if rect is None:
-                                    rect = w_rect
-                                else:
-                                    rect |= w_rect
-                                if clean_target in combined or clean_target[::-1] in combined:
-                                    if len(combined) <= len(clean_target) + 6:
-                                        page_findings.append({
-                                            "page": page_num,
-                                            "rect": [rect.x0, rect.y0, rect.x1, rect.y1],
-                                            "text": entity_text,
-                                            "type": match.category,
-                                            "score": match.confidence,
-                                            "id": f"{page_num}_{rect.x0}_{rect.y0}_{match.category}_fb"
-                                        })
-                                    break
-                        
-        # סינון כפילויות בPage הנוכחי — לפי מיקום ולפי טקסט
+        # 3. חיפוש קואורדינטות לישויות שנמצאו
+        for e in all_entities:
+            e_text = e["text"]
+            if not e_text.strip(): continue
+            
+            if not should_ocr:
+                # חיפוש מובנה ב-PDF מהיר ומדויק
+                search_texts = [e_text]
+                if any(0x0590 <= ord(c) <= 0x05FF for c in e_text):
+                    search_texts.append(e_text[::-1])
+                for s_text in search_texts:
+                    for area in page.search_for(s_text):
+                        page_findings.append({
+                            "page": page_num,
+                            "rect": [area.x0, area.y0, area.x1, area.y1],
+                            "text": e_text,
+                            "type": e["type"],
+                            "score": e["score"],
+                            "id": f"{page_num}_{area.x0}_{area.y0}"
+                        })
+            else:
+                # ב-OCR מחפשים מול רשימת המילים שלנו
+                for w in words:
+                    if e_text in w[4] or w[4] in e_text:
+                        if len(w[4]) >= 2:
+                            page_findings.append({
+                                "page": page_num,
+                                "rect": [w[0], w[1], w[2], w[3]],
+                                "text": e_text,
+                                "type": e["type"],
+                                "score": e["score"],
+                                "id": f"ocr_match_{page_num}_{w[0]}_{w[1]}"
+                            })
+
+        # --- סינון כפילויות ---
         unique_page_findings = []
-        seen_positions = set()
-        seen_texts = set()
         for f in page_findings:
-            pos_key = (round(f["rect"][0]/2)*2, round(f["rect"][1]/2)*2)
-            text_key = f["text"].strip()
-            # דלג אם כבר נמצא באותו מיקום, או אם אותו טקסט כבר קיים עם ציון גבוה יותר
-            if pos_key not in seen_positions and text_key not in seen_texts:
-                seen_positions.add(pos_key)
-                seen_texts.add(text_key)
+            is_dup = False
+            f_rect = fitz.Rect(f["rect"])
+            for uf in unique_page_findings:
+                if f["type"] == uf["type"] and fitz.Rect(uf["rect"]).intersects(f_rect):
+                    is_dup = True
+                    break
+            if not is_dup:
                 unique_page_findings.append(f)
                 
         findings.extend(unique_page_findings)
         
-        # יצירת תמונה של הPage עם המלבנים מסומנים
+        # --- רינדור תמונה ---
         temp_doc = fitz.open(stream=file_bytes, filetype="pdf")
         temp_page = temp_doc[page_num]
         for f in unique_page_findings:
-            # ציור מלבן צהוב בולט עם מסגרת אדומה
             temp_page.draw_rect(fitz.Rect(*f["rect"]), color=(1, 0, 0), width=1.5, fill_opacity=0.3, fill=(1, 1, 0))
-            # הוספת תגית סוג מעל (אופציונלי, בדרך כלל מפריע אז נוותר)
             
         pix = temp_page.get_pixmap(matrix=fitz.Matrix(1.2, 1.2)) 
         page_images.append(pix.tobytes("png"))
@@ -918,13 +964,10 @@ with tab_pdf:
     if uploaded:
         st.info(f"📄 **{uploaded.name}** | {uploaded.size / 1024:.1f} KB")
         
-        # אפשרות ל-OCR כפוי (High Accuracy)
-        force_ocr = st.checkbox("🔍 **מצב דיוק גבוה (OCR)** - השתמש בזה אם הטקסט במסמך נראה משובש", value=False)
-        
         if st.button("🔍 נתח PDF (מצב ויזואלי)", key="btn_pdf", type="primary"):
             with st.spinner("סורק מסמך, מאתר קואורדינטות ומרנדר pages..."):
                 raw = uploaded.getvalue()
-                findings, images = process_pdf_visual(raw, detector, USE_AI, ai_pipeline, force_ocr=force_ocr)
+                findings, images = process_pdf_visual(raw, detector, USE_AI, ai_pipeline)
                 
                 if findings:
                     st.success(f"✅ Found {len(findings)} findings רגישים!")
@@ -945,72 +988,72 @@ with tab_pdf:
             st.subheader("👀 תצוגה מקדימה ובחירת השחרה")
             st.write("סמן בטבלה אילו אזורים להשחיר, או שרטט בעכבר מלבנים ישירות על המסמך (כמו בצייר).")
             
-            col1, col2 = st.columns([1, 1.2])
+            # --- מסמך בגודל מלא ---
+            st.markdown("### 🖼️ תצוגת המסמך")
+            st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
+            from streamlit_drawable_canvas import st_canvas
+            from PIL import Image
             
-            with col1:
-                st.markdown("**רשימת findings אוטומטיים:**")
-                if not findings:
-                    st.info("לא זוהו אוטומטית ממצאים להשחרה. באפשרותך להוסיף טקסט להשחרה ידנית או לצייר מלבנים.")
-                    df = pd.DataFrame(columns=["השחר?", "עמוד", "טקסט", "סוג"])
-                    df["השחר?"] = df["השחר?"].astype(bool)
-                else:
-                    df = pd.DataFrame([{
-                        "השחר?": True,
-                        "עמוד": f.get("page", 0) + 1,
-                        "טקסט": f.get("text", ""),
-                        "סוג": translate_entity(f.get("type", "")),
-                    } for f in findings])
+            canvas_results = []
+            for page_num, img_bytes in enumerate(images):
+                st.write(f"**Page {page_num + 1}**")
+                bg_image = Image.open(io.BytesIO(img_bytes))
                 
-                edited_df = st.data_editor(
-                    df,
-                    column_config={
-                        "השחר?": st.column_config.CheckboxColumn("השחר?", default=True),
-                        "טקסט": st.column_config.TextColumn("טקסט", required=True),
-                        "עמוד": st.column_config.NumberColumn("עמוד (אופציונלי)", required=False)
-                    },
-                    use_container_width=True,
-                    hide_index=True,
-                    num_rows="dynamic",
-                    key=f"pdf_preview_{uploaded.name}"
+                canvas_res = st_canvas(
+                    fill_color="rgba(0, 0, 0, 1)",  # מילוי שחור לסימון
+                    stroke_width=2,
+                    stroke_color="rgba(255, 0, 0, 1)", # מסגרת אדומה
+                    background_image=bg_image,
+                    update_streamlit=True,
+                    height=bg_image.height,
+                    width=bg_image.width,
+                    drawing_mode="rect",
+                    display_toolbar=False,  # הסרת הסרגל כדי למנוע הורדה שגויה
+                    key=f"canvas_{uploaded.name}_{page_num}",
                 )
-                selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()  # noqa: E712
+                canvas_results.append((page_num, canvas_res))
                 
-                # אם נוספו שורות ידניות, נוסיף אותן למערך הממצאים הכולל כדי שיעברו להשחרה הפיזית
-                for idx in selected_indices:
-                    if idx >= len(findings):
-                        # זו שורה ידנית שהמשתמש הוסיף!
-                        row = edited_df.loc[idx]
-                        if row["טקסט"]:
-                            findings.append({
-                                "text": row["טקסט"],
-                                "type": "MANUAL",
-                                "page": row.get("עמוד", 1) - 1 if pd.notna(row.get("עמוד")) else 0
-                            })
-
-            with col2:
-                st.markdown("**תצוגת המסמך (צייר מלבנים להשחרה):**")
-                st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
-                from streamlit_drawable_canvas import st_canvas
-                from PIL import Image
-                
-                canvas_results = []
-                for page_num, img_bytes in enumerate(images):
-                    st.write(f"**Page {page_num + 1}**")
-                    bg_image = Image.open(io.BytesIO(img_bytes))
-                    
-                    canvas_res = st_canvas(
-                        fill_color="rgba(0, 0, 0, 1)",  # מילוי שחור לסימון
-                        stroke_width=2,
-                        stroke_color="rgba(255, 0, 0, 1)", # מסגרת אדומה
-                        background_image=bg_image,
-                        update_streamlit=True,
-                        height=bg_image.height,
-                        width=bg_image.width,
-                        drawing_mode="rect",
-                        display_toolbar=False,  # הסרת הסרגל כדי למנוע הורדה שגויה
-                        key=f"canvas_{uploaded.name}_{page_num}",
-                    )
-                    canvas_results.append((page_num, canvas_res))
+            st.divider()
+            
+            # --- טבלה מתחת ---
+            st.markdown("### 📋 רשימת findings אוטומטיים")
+            if not findings:
+                st.info("לא זוהו אוטומטית ממצאים להשחרה. באפשרותך להוסיף טקסט להשחרה ידנית או לצייר מלבנים על המסמך.")
+                df = pd.DataFrame(columns=["השחר?", "עמוד", "טקסט", "סוג"])
+                df["השחר?"] = df["השחר?"].astype(bool)
+            else:
+                df = pd.DataFrame([{
+                    "השחר?": True,
+                    "עמוד": f.get("page", 0) + 1,
+                    "טקסט": f.get("text", ""),
+                    "סוג": translate_entity(f.get("type", "")),
+                } for f in findings])
+            
+            edited_df = st.data_editor(
+                df,
+                column_config={
+                    "השחר?": st.column_config.CheckboxColumn("השחר?", default=True),
+                    "טקסט": st.column_config.TextColumn("טקסט", required=True),
+                    "עמוד": st.column_config.NumberColumn("עמוד (אופציונלי)", required=False)
+                },
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",
+                key=f"pdf_preview_{uploaded.name}"
+            )
+            selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()  # noqa: E712
+            
+            # אם נוספו שורות ידניות, נוסיף אותן למערך הממצאים הכולל כדי שיעברו להשחרה הפיזית
+            for idx in selected_indices:
+                if idx >= len(findings):
+                    # זו שורה ידנית שהמשתמש הוסיף!
+                    row = edited_df.loc[idx]
+                    if row["טקסט"]:
+                        findings.append({
+                            "text": row["טקסט"],
+                            "type": "MANUAL",
+                            "page": row.get("עמוד", 1) - 1 if pd.notna(row.get("עמוד")) else 0
+                        })
 
             st.markdown("---")
             if st.button("🖊️ בצע השחרה מדויקת", type="primary"):
@@ -1072,63 +1115,3 @@ with tab_pdf:
                 st.markdown(href, unsafe_allow_html=True)
 
 # ────────────────────────────────────────────────────────────────────
-# TAB 5 — AI Pipeline (כל פורמט)
-# ────────────────────────────────────────────────────────────────────
-with tab_ai:
-    st.header("🤖 ניתוח AI מלא (Presidio)")
-    st.write("העלה **כל סוג File** — AI מלא + תצוגה מקדימה + השחרה.")
-
-    if not AI_PIPELINE_AVAILABLE:
-        st.error("❌ Presidio לא מותקן.")
-    elif ai_pipeline is None:
-        st.error("❌ מנוע AI לא עלה.")
-        if _ai_error:
-            st.code(_ai_error)
-        if st.button("🔄 נסה שוב"):
-            st.cache_resource.clear()
-            st.rerun()
-    else:
-        st.success("✅ Presidio + spaCy en_core_web_lg פעיל")
-
-        uploaded = st.file_uploader(
-            "📂 בחר File לניתוח AI",
-            type=["pdf", "docx", "xlsx", "jpg", "jpeg", "png", "bmp"],
-            key="ai_up"
-        )
-
-        if uploaded:
-            ext = uploaded.name.rsplit(".", 1)[-1].upper()
-            st.info(f"📁 **{uploaded.name}** | {ext} | {uploaded.size / 1024:.1f} KB")
-
-            if st.button("🚀 נתח עם AI", key="btn_ai", type="primary"):
-                with st.spinner("🤖 Presidio + spaCy מנתחים..."):
-                    raw = uploaded.getvalue()
-                    rep = ai_pipeline.process_file(file_bytes=raw, filename=uploaded.name)
-
-                if rep["success"]:
-                    # הצג סיכום סיכון
-                    ev = rep["risk_evaluation"]
-                    risk_level = ev["risk_level"]
-                    icons = {"SAFE": "🛡️", "WARNING": "⚠️", "UNSAFE": "🚨"}
-                    alerts = {"SAFE": st.success, "WARNING": st.warning, "UNSAFE": st.error}
-                    alerts.get(risk_level, st.info)(
-                        f"{icons.get(risk_level,'')} Risk level: **{risk_level}** | {ev['summary']}"
-                    )
-
-                    with st.expander("📝 טקסט מצונזר"):
-                        st.text(rep.get("anonymized_text", ""))
-
-                    entities = ai_entities_to_preview(rep["entities"])
-                    st.session_state["ai_entities"] = entities
-                    st.session_state["ai_bytes"]    = raw
-                    st.session_state["ai_name"]     = uploaded.name
-                else:
-                    st.error(f"❌ {rep.get('error')}")
-
-            if "ai_entities" in st.session_state and st.session_state.get("ai_name") == uploaded.name:
-                st.divider()
-                show_preview_and_redact(
-                    st.session_state["ai_entities"],
-                    st.session_state["ai_bytes"],
-                    st.session_state["ai_name"]
-                )
