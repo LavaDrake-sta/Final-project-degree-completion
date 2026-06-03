@@ -1,0 +1,163 @@
+@trace_execution
+def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipeline_engine=None):
+    """
+    סורק PDF, מחלץ קואורדינטות של מידע רגיש, ומייצר תמונות להשחרה.
+    תומך בצורה אחידה במסמכים רגילים ובמסמכים סרוקים (OCR).
+    """
+    import fitz
+    from PIL import Image
+    import io
+    
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    findings = []
+    page_images = []
+    
+    # מילות מפתח לחיפוש מרחבי
+    SPATIAL_LABELS = {
+        "מספר אישי": "IL_PERSONAL_NUMBER",
+        "מ.א.": "IL_PERSONAL_NUMBER",
+        "תעודת זהות": "IL_ID",
+        "ת.ז": "IL_ID",
+        "שם פרטי": "HEB_NAME",
+        "שם משפחה": "HEB_NAME",
+        "תאריך לידה": "DATE_OF_BIRTH",
+        "חשבון בנק": "IL_BANK_ACCOUNT",
+    }
+    
+    for page_num in range(len(doc)):
+        log_progress(page_num + 1, len(doc), "Visual PDF Scan")
+        page = doc[page_num]
+        text = page.get_text()
+        
+        # האם להשתמש ב-OCR?
+        readable_chars = sum(1 for c in text if c.isascii() and c.isprintable() or 0x0590 <= ord(c) <= 0x05FF or c.isdigit())
+        should_ocr = len(text.strip()) < 50 or not (readable_chars > 30)
+        
+        words = [] # יכיל: (x0, y0, x1, y1, text)
+        
+        if should_ocr and TESSERACT_OK:
+            import pytesseract
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+            img = Image.open(io.BytesIO(pix.tobytes()))
+            data = pytesseract.image_to_data(img, lang='heb+eng', output_type=pytesseract.Output.DICT)
+            for i in range(len(data['text'])):
+                txt = data['text'][i].strip()
+                if txt:
+                    # Tesseract רץ על פי 2 מהגודל המקורי, נחלק ב-2
+                    x = data['left'][i] / 2.0
+                    y = data['top'][i] / 2.0
+                    w = data['width'][i] / 2.0
+                    h = data['height'][i] / 2.0
+                    words.append((x, y, x + w, y + h, txt))
+        else:
+            for w in page.get_text("words"):
+                words.append((w[0], w[1], w[2], w[3], w[4]))
+                
+        page_findings = []
+        
+        # 1. לוגיקה מרחבית (Spatial) - חיפוש לפי כותרות
+        for word_data in words:
+            w_text = word_data[4]
+            w_rect = fitz.Rect(word_data[:4])
+            
+            label_type = None
+            for lab, l_type in SPATIAL_LABELS.items():
+                if lab in w_text or lab[::-1] in w_text:
+                    label_type = l_type
+                    break
+            
+            if label_type:
+                # מצאנו כותרת, נחפש מעליה או מתחתיה
+                search_area = w_rect + (-50, -60, 50, 10)
+                for other_word in words:
+                    o_text = other_word[4]
+                    o_rect = fitz.Rect(other_word[:4])
+                    if o_rect.intersects(search_area) and o_text != w_text:
+                        is_val = any(c.isdigit() for c in o_text) or any(0x0590 <= ord(c) <= 0x05FF for c in o_text)
+                        if is_val and len(o_text) >= 2:
+                            page_findings.append({
+                                "page": page_num,
+                                "rect": [o_rect.x0, o_rect.y0, o_rect.x1, o_rect.y1],
+                                "text": o_text,
+                                "type": label_type,
+                                "score": 0.99,
+                                "id": f"spatial_{page_num}_{o_rect.x0}_{o_rect.y0}"
+                            })
+
+        # 2. זיהוי טקסט מלא (Regex + AI)
+        full_text = " ".join([w[4] for w in words])
+        all_entities = []
+        
+        # תמיד מריצים Regex
+        res = detector_engine.analyze_text(full_text)
+        for match in res.get("matches", []):
+            if match.confidence >= 0.3:
+                all_entities.append({"text": match.text, "type": match.category, "score": match.confidence})
+                
+        # אם AI מופעל
+        if use_ai and ai_pipeline_engine:
+            rep = ai_pipeline_engine.process_file(file_bytes=full_text.encode('utf-8', errors='ignore'), filename="dummy.txt")
+            if rep.get("success") and "entities" in rep:
+                for e in rep["entities"]:
+                    all_entities.append({"text": e.get("text", ""), "type": e.get("entity_type", "PII"), "score": e.get("score", 0.8)})
+                    
+        # 3. חיפוש קואורדינטות לישויות שנמצאו
+        for e in all_entities:
+            e_text = e["text"]
+            if not e_text.strip(): continue
+            
+            if not should_ocr:
+                # חיפוש מובנה ב-PDF מהיר ומדויק
+                search_texts = [e_text]
+                if any(0x0590 <= ord(c) <= 0x05FF for c in e_text):
+                    search_texts.append(e_text[::-1])
+                for s_text in search_texts:
+                    for area in page.search_for(s_text):
+                        page_findings.append({
+                            "page": page_num,
+                            "rect": [area.x0, area.y0, area.x1, area.y1],
+                            "text": e_text,
+                            "type": e["type"],
+                            "score": e["score"],
+                            "id": f"{page_num}_{area.x0}_{area.y0}"
+                        })
+            else:
+                # ב-OCR מחפשים מול רשימת המילים שלנו
+                for w in words:
+                    if e_text in w[4] or w[4] in e_text:
+                        if len(w[4]) >= 2:
+                            page_findings.append({
+                                "page": page_num,
+                                "rect": [w[0], w[1], w[2], w[3]],
+                                "text": e_text,
+                                "type": e["type"],
+                                "score": e["score"],
+                                "id": f"ocr_match_{page_num}_{w[0]}_{w[1]}"
+                            })
+
+        # --- סינון כפילויות ---
+        unique_page_findings = []
+        for f in page_findings:
+            is_dup = False
+            f_rect = fitz.Rect(f["rect"])
+            for uf in unique_page_findings:
+                if f["type"] == uf["type"] and fitz.Rect(uf["rect"]).intersects(f_rect):
+                    is_dup = True
+                    break
+            if not is_dup:
+                unique_page_findings.append(f)
+                
+        findings.extend(unique_page_findings)
+        
+        # --- רינדור תמונה ---
+        temp_doc = fitz.open(stream=file_bytes, filetype="pdf")
+        temp_page = temp_doc[page_num]
+        for f in unique_page_findings:
+            temp_page.draw_rect(fitz.Rect(*f["rect"]), color=(1, 0, 0), width=1.5, fill_opacity=0.3, fill=(1, 1, 0))
+            
+        pix = temp_page.get_pixmap(matrix=fitz.Matrix(1.2, 1.2)) 
+        page_images.append(pix.tobytes("png"))
+        temp_doc.close()
+        
+    doc.close()
+    return findings, page_images

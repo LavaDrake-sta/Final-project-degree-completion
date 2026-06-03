@@ -81,3 +81,4 @@ flake8>=5.0.0
 #    streamlit run src/ui/streamlit_app.py
 #
 pywin32
+streamlit-drawable-canvas

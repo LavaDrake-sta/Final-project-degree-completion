@@ -5,6 +5,8 @@ PII Detection System - Streamlit App
 """
 
 import streamlit as st
+
+
 import pandas as pd
 import sys
 import os
@@ -325,22 +327,31 @@ def show_preview_and_redact(entities: list, file_bytes: bytes, filename: str, or
     with main_col2:
         st.markdown("**תצוגת המסמך:**")
         if ext in ("docx", "xlsx"):
-            cache_key = f"visual_preview_{filename}"
-            if cache_key not in st.session_state:
+            cache_key_base = f"base_office_{filename}"
+            if cache_key_base not in st.session_state:
                 with st.spinner("מייצר תצוגה ויזואלית מקדימה (המתן מעט)..."):
                     try:
-                        from src.utils.pdf_converter import convert_office_to_pdf, get_highlighted_images_from_pdf
-                        pdf_bytes = convert_office_to_pdf(file_bytes, ext)
-                        images = get_highlighted_images_from_pdf(pdf_bytes, entities)
-                        st.session_state[cache_key] = images
+                        from src.utils.pdf_converter import convert_office_to_pdf
+                        base_pdf_bytes = convert_office_to_pdf(file_bytes, ext)
+                        st.session_state[cache_key_base] = base_pdf_bytes
                     except Exception as e:
                         st.error(f"שגיאה ביצירת תצוגה ויזואלית: {e}")
-                        st.session_state[cache_key] = []
+                        st.session_state[cache_key_base] = None
                         
-            images = st.session_state.get(cache_key, [])
-            if images:
-                for idx, img_bytes in enumerate(images):
-                    st.image(img_bytes, caption=f"עמוד {idx+1}", use_column_width=True)
+            base_pdf_bytes = st.session_state.get(cache_key_base)
+            if base_pdf_bytes:
+                from src.utils.pdf_converter import get_highlighted_images_from_pdf
+                # סמן רק את הטקסטים שנבחרו בטבלה! (ככה זה מעודכן אוטומטית כשמסירים סימון)
+                selected_entities = [{"text": t} for t in selected_texts]
+                
+                with st.spinner("מרנדר סימונים על המסמך..."):
+                    images = get_highlighted_images_from_pdf(base_pdf_bytes, selected_entities)
+                
+                if images:
+                    for idx, img_bytes in enumerate(images):
+                        st.image(img_bytes, caption=f"עמוד {idx+1}", use_column_width=True)
+                else:
+                    st.info("שגיאה ברינדור התמונות או שאין עמודים להצגה.")
             else:
                 # Fallback to text
                 if original_text:
@@ -501,11 +512,6 @@ def process_image_visual(image_bytes: bytes, detector_engine, use_ai: bool, ai_p
         ocr_results.append((bbox, text, conf))
     
     findings = []
-    # יצירת עותק לציור
-    draw_img = img.convert("RGBA")
-    overlay = Image.new("RGBA", draw_img.size, (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
-    
     for bbox, snippet_text, conf in ocr_results:
         if not snippet_text.strip(): continue
         
@@ -530,9 +536,6 @@ def process_image_visual(image_bytes: bytes, detector_engine, use_ai: bool, ai_p
             y_coords = [p[1] for p in bbox]
             rect = [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
             
-            # ציור על ה-Overlay
-            draw.rectangle(rect, fill=(255, 255, 0, 80), outline=(255, 0, 0, 200), width=2)
-            
             for sf in snippet_findings:
                 findings.append({
                     "rect": rect,
@@ -541,12 +544,9 @@ def process_image_visual(image_bytes: bytes, detector_engine, use_ai: bool, ai_p
                     "score": sf.get("score", conf),
                 })
     
-    # איחוד התמונה עם ה-Overlay
-    final_img = Image.alpha_composite(draw_img, overlay).convert("RGB")
-    
-    # המרה חזרה ל-bytes
+    # המרה חזרה ל-bytes (תמונה נקייה)
     img_byte_arr = io.BytesIO()
-    final_img.save(img_byte_arr, format='PNG')
+    img.save(img_byte_arr, format='PNG')
     return findings, img_byte_arr.getvalue()
 
 
@@ -579,30 +579,6 @@ with tab_img:
                 
                 st.subheader("👀 תצוגה מקדימה ובחירת השחרה")
                 st.write("סמן בטבלה אילו אזורים להשחיר, או שרטט בעכבר מלבנים ישירות על התמונה.")
-                
-                st.markdown("### 🖼️ תצוגת המסמך")
-                st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
-                
-                from streamlit_drawable_canvas import st_canvas
-                from PIL import Image
-                import io
-                
-                bg_image = Image.open(io.BytesIO(st.session_state["img_visual_preview"]))
-                
-                canvas_res = st_canvas(
-                    fill_color="rgba(0, 0, 0, 1)",
-                    stroke_width=2,
-                    stroke_color="rgba(255, 0, 0, 1)",
-                    background_image=bg_image,
-                    update_streamlit=True,
-                    height=bg_image.height,
-                    width=bg_image.width,
-                    drawing_mode="rect",
-                    display_toolbar=False,
-                    key=f"canvas_img_{uploaded.name}",
-                )
-                
-                st.divider()
                 
                 st.markdown("### 📋 רשימת findings אוטומטיים")
                 if not findings:
@@ -638,6 +614,88 @@ with tab_img:
                                 "type": "MANUAL",
                             })
                             
+                st.divider()
+                st.markdown("### 🖼️ תצוגת המסמך")
+                st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
+                
+                col_draw1, col_draw2 = st.columns(2)
+                with col_draw1:
+                    drawing_mode_text = st.radio("מצב עכבר:", ["🖌️ ציור מלבנים שחורים", "🖱️ בחירה ומחיקת מלבנים (למה שציירת)"], horizontal=True, key=f"mode_img_{uploaded.name}")
+                drawing_mode = "rect" if "ציור" in drawing_mode_text else "transform"
+                
+                from streamlit_drawable_canvas import st_canvas
+                import io
+                import base64
+                
+                # Caching data URL for performance
+                cache_key_url = f"img_data_url_{uploaded.name}"
+                if cache_key_url not in st.session_state:
+                    from PIL import Image
+                    bg_image = Image.open(io.BytesIO(st.session_state["img_visual_preview"]))
+                    buffered = io.BytesIO()
+                    bg_image.save(buffered, format="PNG")
+                    img_str = base64.b64encode(buffered.getvalue()).decode()
+                    st.session_state[cache_key_url] = f"data:image/png;base64,{img_str}"
+                    st.session_state[f"img_w_{uploaded.name}"] = bg_image.width
+                    st.session_state[f"img_h_{uploaded.name}"] = bg_image.height
+                
+                data_url = st.session_state[cache_key_url]
+                bg_width = st.session_state[f"img_w_{uploaded.name}"]
+                bg_height = st.session_state[f"img_h_{uploaded.name}"]
+                
+                init_drawing = {
+                    "version": "4.4.0",
+                    "objects": [{
+                        "type": "image",
+                        "left": 0, "top": 0,
+                        "width": bg_width, "height": bg_height,
+                        "src": data_url,
+                        "selectable": False,
+                        "evented": False,
+                        "crossOrigin": None
+                    }]
+                }
+                
+                # 1. הזרקת מלבנים צהובים (אוטומטיים) רק עבור מה שמסומן בטבלה
+                for idx in selected_indices:
+                    if idx < len(findings):
+                        f = findings[idx]
+                        if "rect" in f:
+                            init_drawing["objects"].append({
+                                "type": "rect",
+                                "left": f["rect"][0],
+                                "top": f["rect"][1],
+                                "width": f["rect"][2] - f["rect"][0],
+                                "height": f["rect"][3] - f["rect"][1],
+                                "fill": "rgba(255, 255, 0, 0.4)",
+                                "stroke": "rgba(255, 165, 0, 1)",
+                                "strokeWidth": 2,
+                                "selectable": False,
+                                "evented": False,
+                                "is_auto": True
+                            })
+                
+                # 2. שחזור מלבנים ידניים (שחורים) שהמשתמש צייר קודם
+                canvas_state = st.session_state.get(f"canvas_img_{uploaded.name}")
+                if canvas_state is not None and "json_data" in canvas_state and canvas_state["json_data"] is not None:
+                    for obj in canvas_state["json_data"].get("objects", []):
+                        if obj.get("type") == "rect" and obj.get("fill") == "rgba(0, 0, 0, 1)":
+                            init_drawing["objects"].append(obj)
+                
+                canvas_res = st_canvas(
+                    fill_color="rgba(0, 0, 0, 1)",
+                    stroke_width=2,
+                    stroke_color="rgba(255, 0, 0, 1)",
+                    background_color="rgba(0,0,0,0)",
+                    initial_drawing=init_drawing,
+                    update_streamlit=True,
+                    height=bg_height,
+                    width=bg_width,
+                    drawing_mode=drawing_mode,
+                    display_toolbar=(drawing_mode == "transform"),
+                    key=f"canvas_img_{uploaded.name}",
+                )
+                            
                 st.markdown("---")
                 if st.button("🖊️ בצע השחרה מדויקת", type="primary", key="btn_redact_img"):
                     if not REDACTORS_AVAILABLE:
@@ -650,7 +708,7 @@ with tab_img:
                             
                             if canvas_res is not None and canvas_res.json_data is not None:
                                 for obj in canvas_res.json_data.get("objects", []):
-                                    if obj.get("type") == "rect":
+                                    if obj.get("type") == "rect" and obj.get("fill") == "rgba(0, 0, 0, 1)":
                                         x0 = obj["left"]
                                         y0 = obj["top"]
                                         x1 = x0 + obj["width"] * obj["scaleX"]
@@ -670,7 +728,7 @@ with tab_img:
                                     st.session_state["img_ready_for_download"] = True
                                     st.session_state["img_redacted_bytes"] = redacted_bytes
                                     st.session_state["img_out_name"] = f"redacted_{uploaded.name}"
-                                    st.experimental_rerun()
+                                    st.rerun()
                                 else:
                                     st.error("❌ שגיאה ביצירת התמונה המושחרת.")
                 
@@ -939,13 +997,10 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
                 
         findings.extend(unique_page_findings)
         
-        # --- רינדור תמונה ---
+        # --- רינדור תמונה נקייה ---
         temp_doc = fitz.open(stream=file_bytes, filetype="pdf")
         temp_page = temp_doc[page_num]
-        for f in unique_page_findings:
-            temp_page.draw_rect(fitz.Rect(*f["rect"]), color=(1, 0, 0), width=1.5, fill_opacity=0.3, fill=(1, 1, 0))
-            
-        pix = temp_page.get_pixmap(matrix=fitz.Matrix(1.2, 1.2)) 
+        pix = temp_page.get_pixmap(matrix=fitz.Matrix(1.2, 1.2), alpha=False) 
         page_images.append(pix.tobytes("png"))
         temp_doc.close()
         
@@ -988,34 +1043,7 @@ with tab_pdf:
             st.subheader("👀 תצוגה מקדימה ובחירת השחרה")
             st.write("סמן בטבלה אילו אזורים להשחיר, או שרטט בעכבר מלבנים ישירות על המסמך (כמו בצייר).")
             
-            # --- מסמך בגודל מלא ---
-            st.markdown("### 🖼️ תצוגת המסמך")
-            st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
-            from streamlit_drawable_canvas import st_canvas
-            from PIL import Image
-            
-            canvas_results = []
-            for page_num, img_bytes in enumerate(images):
-                st.write(f"**Page {page_num + 1}**")
-                bg_image = Image.open(io.BytesIO(img_bytes))
-                
-                canvas_res = st_canvas(
-                    fill_color="rgba(0, 0, 0, 1)",  # מילוי שחור לסימון
-                    stroke_width=2,
-                    stroke_color="rgba(255, 0, 0, 1)", # מסגרת אדומה
-                    background_image=bg_image,
-                    update_streamlit=True,
-                    height=bg_image.height,
-                    width=bg_image.width,
-                    drawing_mode="rect",
-                    display_toolbar=False,  # הסרת הסרגל כדי למנוע הורדה שגויה
-                    key=f"canvas_{uploaded.name}_{page_num}",
-                )
-                canvas_results.append((page_num, canvas_res))
-                
-            st.divider()
-            
-            # --- טבלה מתחת ---
+            # --- טבלה למעלה ---
             st.markdown("### 📋 רשימת findings אוטומטיים")
             if not findings:
                 st.info("לא זוהו אוטומטית ממצאים להשחרה. באפשרותך להוסיף טקסט להשחרה ידנית או לצייר מלבנים על המסמך.")
@@ -1043,10 +1071,9 @@ with tab_pdf:
             )
             selected_indices = edited_df[edited_df["השחר?"] == True].index.tolist()  # noqa: E712
             
-            # אם נוספו שורות ידניות, נוסיף אותן למערך הממצאים הכולל כדי שיעברו להשחרה הפיזית
+            # הוספת שורות ידניות למערך findings
             for idx in selected_indices:
                 if idx >= len(findings):
-                    # זו שורה ידנית שהמשתמש הוסיף!
                     row = edited_df.loc[idx]
                     if row["טקסט"]:
                         findings.append({
@@ -1054,6 +1081,110 @@ with tab_pdf:
                             "type": "MANUAL",
                             "page": row.get("עמוד", 1) - 1 if pd.notna(row.get("עמוד")) else 0
                         })
+            
+            st.divider()
+            
+            # --- מסמך בגודל מלא ---
+            st.markdown("### 🖼️ תצוגת המסמך")
+            st.warning("⚠️ **שים לב:** אל תשתמש בכפתור ההורדה הקטן שבתוך התמונה. בסיום הציור, לחץ על 'בצע השחרה מדויקת' למטה!")
+            
+            col_draw1, col_draw2 = st.columns(2)
+            with col_draw1:
+                drawing_mode_text = st.radio("מצב עכבר (לכל העמודים):", ["🖌️ ציור מלבנים שחורים", "🖱️ בחירה ומחיקת מלבנים (למה שציירת)"], horizontal=True, key=f"mode_pdf_{uploaded.name}")
+            drawing_mode = "rect" if "ציור" in drawing_mode_text else "transform"
+            
+            from streamlit_drawable_canvas import st_canvas
+            import io
+            import base64
+            
+            # Caching to prevent slow reruns
+            cache_pdf_urls = f"pdf_data_urls_{uploaded.name}"
+            if cache_pdf_urls not in st.session_state:
+                st.session_state[cache_pdf_urls] = {}
+            pdf_data_urls = st.session_state[cache_pdf_urls]
+            
+            canvas_results = []
+            for page_num, img_bytes in enumerate(images):
+                st.write(f"**Page {page_num + 1}**")
+                
+                if page_num not in pdf_data_urls:
+                    from PIL import Image
+                    bg_image = Image.open(io.BytesIO(img_bytes))
+                    if bg_image.mode in ('RGBA', 'LA') or (bg_image.mode == 'P' and 'transparency' in bg_image.info):
+                        bg = Image.new("RGB", bg_image.size, (255, 255, 255))
+                        bg.paste(bg_image, mask=bg_image.convert('RGBA').split()[3])
+                        bg_image = bg
+                    else:
+                        bg_image = bg_image.convert('RGB')
+                    
+                    buffered = io.BytesIO()
+                    bg_image.save(buffered, format="PNG")
+                    img_str = base64.b64encode(buffered.getvalue()).decode()
+                    pdf_data_urls[page_num] = {
+                        "url": f"data:image/png;base64,{img_str}",
+                        "w": bg_image.width,
+                        "h": bg_image.height
+                    }
+                
+                cached_page = pdf_data_urls[page_num]
+                data_url = cached_page["url"]
+                bg_width = cached_page["w"]
+                bg_height = cached_page["h"]
+                
+                init_drawing = {
+                    "version": "4.4.0",
+                    "objects": [{
+                        "type": "image",
+                        "left": 0, "top": 0,
+                        "width": bg_width, "height": bg_height,
+                        "src": data_url,
+                        "selectable": False,
+                        "evented": False,
+                        "crossOrigin": None
+                    }]
+                }
+                
+                # 1. מלבנים צהובים (אוטומטיים) של העמוד הנוכחי
+                # Scale by 1.2 to match PyMuPDF get_pixmap matrix!
+                for idx in selected_indices:
+                    if idx < len(findings):
+                        f = findings[idx]
+                        if f.get("page", 0) == page_num and "rect" in f:
+                            init_drawing["objects"].append({
+                                "type": "rect",
+                                "left": f["rect"][0] * 1.2,
+                                "top": f["rect"][1] * 1.2,
+                                "width": (f["rect"][2] - f["rect"][0]) * 1.2,
+                                "height": (f["rect"][3] - f["rect"][1]) * 1.2,
+                                "fill": "rgba(255, 255, 0, 0.4)",
+                                "stroke": "rgba(255, 165, 0, 1)",
+                                "strokeWidth": 2,
+                                "selectable": False,
+                                "evented": False,
+                                "is_auto": True
+                            })
+                
+                # 2. מלבנים שחורים (ידניים) של העמוד הנוכחי
+                canvas_state = st.session_state.get(f"canvas_{uploaded.name}_{page_num}")
+                if canvas_state is not None and "json_data" in canvas_state and canvas_state["json_data"] is not None:
+                    for obj in canvas_state["json_data"].get("objects", []):
+                        if obj.get("type") == "rect" and obj.get("fill") == "rgba(0, 0, 0, 1)":
+                            init_drawing["objects"].append(obj)
+                
+                canvas_res = st_canvas(
+                    fill_color="rgba(0, 0, 0, 1)",
+                    stroke_width=2,
+                    stroke_color="rgba(255, 0, 0, 1)",
+                    background_color="rgba(0,0,0,0)",
+                    initial_drawing=init_drawing,
+                    update_streamlit=True,
+                    height=bg_height,
+                    width=bg_width,
+                    drawing_mode=drawing_mode,
+                    display_toolbar=(drawing_mode == "transform"),
+                    key=f"canvas_{uploaded.name}_{page_num}",
+                )
+                canvas_results.append((page_num, canvas_res))
 
             st.markdown("---")
             if st.button("🖊️ בצע השחרה מדויקת", type="primary"):
@@ -1066,11 +1197,11 @@ with tab_pdf:
                         if findings:
                             selected_findings.extend([findings[i] for i in selected_indices])
                         
-                        # אוסף מלבנים שצוירו בעכבר
+                        # אוסף מלבנים שצוירו בעכבר (שחורים בלבד)
                         for page_num, c_res in canvas_results:
                             if c_res is not None and c_res.json_data is not None:
                                 for obj in c_res.json_data.get("objects", []):
-                                    if obj.get("type") == "rect":
+                                    if obj.get("type") == "rect" and obj.get("fill") == "rgba(0, 0, 0, 1)":
                                         x0 = obj["left"]
                                         y0 = obj["top"]
                                         x1 = x0 + obj["width"] * obj["scaleX"]
@@ -1093,7 +1224,7 @@ with tab_pdf:
                                 # שומר ב-Session State כדי לא לאבד ב-Rerun!
                                 st.session_state["ready_for_download"] = True
                                 st.session_state["redacted_bytes_to_download"] = redacted_bytes
-                                st.experimental_rerun()
+                                st.rerun()
                             else:
                                 st.error("❌ שגיאה ביצירת הFile המושחר.")
             
