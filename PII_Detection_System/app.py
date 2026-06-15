@@ -866,7 +866,7 @@ with tab_excel:
 
 # ────────────────────────────────────────────────────────────────────
 @trace_execution
-def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipeline_engine=None):
+def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipeline_engine=None, force_ocr: bool = False):
     """
     סורק PDF, מחלץ קואורדינטות של מידע רגיש, ומייצר תמונות להשחרה.
     תומך בצורה אחידה במסמכים רגילים ובמסמכים סרוקים (OCR).
@@ -902,11 +902,12 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
         total_chars = len(text.strip())
         
         # אם הטקסט קצר מדי, או שאין כמעט עברית בטקסט ארוך (מה שמעיד על קידוד פגום) נפעיל OCR
-        should_ocr = False
-        if total_chars < 50:
-            should_ocr = True
-        elif heb_chars < (total_chars * 0.05):
-            should_ocr = True
+        should_ocr = force_ocr
+        if not should_ocr:
+            if total_chars < 50:
+                should_ocr = True
+            elif heb_chars < (total_chars * 0.05):
+                should_ocr = True
         
         words = [] # יכיל: (x0, y0, x1, y1, text)
         
@@ -914,6 +915,8 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
             import pytesseract
             pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
             img = Image.open(io.BytesIO(pix.tobytes()))
+            tessdata_dir = os.path.join(base_dir, "tessdata")
+            os.environ["TESSDATA_PREFIX"] = tessdata_dir
             data = pytesseract.image_to_data(img, lang='heb+eng', output_type=pytesseract.Output.DICT)
             for i in range(len(data['text'])):
                 txt = data['text'][i].strip()
@@ -1043,19 +1046,24 @@ with tab_pdf:
     st.caption("PDF רגיל וסרוק + זיהוי PII + תצוגה מקדימה אמיתית של העמודים והשחרה by coordinates")
 
     uploaded = st.file_uploader("📂 בחר File PDF", type=["pdf"], key="pdf_up")
+    
+    force_ocr = st.checkbox("🔍 אילוץ סריקה חזותית מלאה (OCR) - סמן אם הטקסט מתגלה כג'יבריש או אנגלית", value=False, key="pdf_force_ocr")
+    
     if uploaded:
         st.info(f"📄 **{uploaded.name}** | {uploaded.size / 1024:.1f} KB")
         
         if st.button("🔍 נתח PDF (מצב ויזואלי)", key="btn_pdf", type="primary"):
             with st.spinner("סורק מסמך, מאתר קואורדינטות ומרנדר pages..."):
                 raw = uploaded.getvalue()
-                findings, images = process_pdf_visual(raw, detector, USE_AI, ai_pipeline)
+                findings, images = process_pdf_visual(raw, detector, USE_AI, ai_pipeline, force_ocr)
                 
                 if findings:
                     st.success(f"✅ Found {len(findings)} findings רגישים!")
                 else:
                     st.success("✅ המסמך נקי ממידע רגיש.")
                     
+                import uuid
+                st.session_state["pdf_scan_id"] = str(uuid.uuid4())
                 st.session_state["pdf_visual_findings"] = findings
                 st.session_state["pdf_visual_images"] = images
                 st.session_state["pdf_bytes"]    = raw
@@ -1198,6 +1206,7 @@ with tab_pdf:
                         if obj.get("type") == "rect" and obj.get("fill") == "rgba(0, 0, 0, 1)":
                             init_drawing["objects"].append(obj)
                 
+                scan_id = st.session_state.get("pdf_scan_id", "default")
                 canvas_res = st_canvas(
                     fill_color="rgba(0, 0, 0, 1)",
                     stroke_width=2,
@@ -1209,7 +1218,7 @@ with tab_pdf:
                     width=bg_width,
                     drawing_mode=drawing_mode,
                     display_toolbar=(drawing_mode == "transform"),
-                    key=f"canvas_{uploaded.name}_{page_num}",
+                    key=f"canvas_{uploaded.name}_{page_num}_{scan_id}",
                 )
                 canvas_results.append((page_num, canvas_res))
 
