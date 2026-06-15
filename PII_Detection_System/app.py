@@ -897,8 +897,16 @@ def process_pdf_visual(file_bytes: bytes, detector_engine, use_ai: bool, ai_pipe
         text = page.get_text()
         
         # האם להשתמש ב-OCR?
-        readable_chars = sum(1 for c in text if c.isascii() and c.isprintable() or 0x0590 <= ord(c) <= 0x05FF or c.isdigit())
-        should_ocr = len(text.strip()) < 50 or not (readable_chars > 30)
+        # במסמכים סרוקים או עם קידוד פגום, PyMuPDF שולף אותיות באנגלית/מספרים במקום עברית.
+        heb_chars = sum(1 for c in text if 0x0590 <= ord(c) <= 0x05FF)
+        total_chars = len(text.strip())
+        
+        # אם הטקסט קצר מדי, או שאין כמעט עברית בטקסט ארוך (מה שמעיד על קידוד פגום) נפעיל OCR
+        should_ocr = False
+        if total_chars < 50:
+            should_ocr = True
+        elif heb_chars < (total_chars * 0.05):
+            should_ocr = True
         
         words = [] # יכיל: (x0, y0, x1, y1, text)
         
