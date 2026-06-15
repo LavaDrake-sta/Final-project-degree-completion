@@ -43,6 +43,7 @@ xlsxwriter==3.2.9
 pdfminer.six==20251230
 pdfplumber==0.11.9
 lxml==6.0.2
+pywin32>=306
 
 # ===============================
 # User Interface (Streamlit)
@@ -82,8 +83,11 @@ flake8==7.3.0
 #    python -m spacy download en_core_web_lg
 #
 # 4. Run the System:
-#    From the root directory:
-#    streamlit run PII_Detection_System/app.py
+#    Open the terminal and navigate to the project directory:
+#    cd PII_Detection_System
+#    Activate the virtual environment:
+#    .\venv\Scripts\activate
+#    Run the app:
 #    streamlit run app.py
 # 
 # ====================================================================

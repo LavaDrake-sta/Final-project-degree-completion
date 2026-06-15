@@ -181,7 +181,26 @@ ENTITY_HEBREW = {
 
 def translate_entity(entity_type: str) -> str:
     """מתרגם שם ישות מאנגלית לעברית"""
-    return ENTITY_HEBREW.get(entity_type, entity_type)
+    if not entity_type: return ""
+    if entity_type in ENTITY_HEBREW: return ENTITY_HEBREW[entity_type]
+    if entity_type.upper() in ENTITY_HEBREW: return ENTITY_HEBREW[entity_type.upper()]
+    
+    try:
+        from src.detectors.basic_detector import category_display_name
+        res = category_display_name(entity_type)
+        if res != entity_type: return res
+    except Exception:
+        pass
+
+    fallback = {
+        "email": "כתובת אימייל",
+        "bank_account": "חשבון בנק",
+        "postal_code": "מיקוד",
+        "heb_address": "כתובת מגורים",
+        "website": "אתר אינטרנט",
+        "financial_amount": "סכום כספי"
+    }
+    return fallback.get(entity_type, entity_type)
 
 # ─── cache: load engines once ────────────────────────────────────
 @st.cache_resource(show_spinner="⏳ טוען מנועי AI... (רק בפעם הראשונה)")
